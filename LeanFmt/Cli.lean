@@ -611,6 +611,14 @@ private def runSummary (report : RunReport) : String :=
         out ++
           s!"{fileCount report.validationBypassed} published without full validation \
       (--no-validate).\n"
+    if report.verbatimCommands > 0 then
+      out :=
+        out ++
+          (if report.verbatimCommands == 1 then
+            "1 command kept its original layout; no layout for it passed validation.\n"
+          else
+            s!"{report.verbatimCommands} commands kept their original layout; no layout for them \
+      passed validation.\n")
     if report.withheldUnsafe > 0 then
       out :=
         out ++
@@ -1167,6 +1175,7 @@ private def renderStatistics (report : RunReport) : IO Unit := do
     broken={report.broken} unbuilt={report.unbuilt} rejected={report.rejected} \
     withheld_unsafe={report.withheldUnsafe} \
     suppressed={report.suppressed} validation_bypassed={report.validationBypassed} \
+    verbatim_commands={report.verbatimCommands} \
     infrastructure_failures={report.infrastructureFailures.size}"
   if report.unbuilt > 0 then
     let missing :=

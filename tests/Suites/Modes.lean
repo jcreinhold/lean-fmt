@@ -407,9 +407,14 @@ private def testStatistics (ctx : Ctx) : IO Unit := do
     run ctx 1 "statistics"
         #["check", "--root", ".", "--json", "--no-cache", "--statistics",
           "tests/fixtures/check/Findings.lean"]
-  discard <| parseJson result.stdout "statistics stdout"
-  ensure ((result.stderr.splitOn "\n").any (·.startsWith "lean-fmt statistics:"))
-      "no statistics block on stderr"
+  let report ← parseJson result.stdout "statistics stdout"
+  let some line :=
+    (result.stderr.splitOn "\n").find?
+      (·.startsWith "lean-fmt statistics:") | throw <| IO.userError "no statistics block on stderr"
+  -- A counter reported nowhere is a counter nobody can act on: this run degraded nothing, and
+  -- `verbatim_commands=0` is what says so rather than the field being absent.
+  ensureContains line "verbatim_commands=0" "statistics"
+  ensureJsonAt report [.field "verbatimCommands"] (Lean.toJson (0 : Nat)) "statistics"
 
 /-- A semantic validation rejection rejects the whole file without a formatter write. -/
 private def testValidatorRejection (ctx : Ctx) : IO Unit := do
@@ -1050,8 +1055,11 @@ public def main (args : List String) : IO UInt32 := do
       writeFile (work / "reject-validator")
           -- The fake validator speaks the batch transport: given the trailing output paths it
           -- writes its envelope to the out file; without them it prints to stdout, as a direct
-          -- invocation always has.
-          "#!/bin/sh\njson='{\"artifact\":null,\"diagnostics\":[\"forced validation rejection\"]}'\n\
+          -- invocation always has. Every array field has to be spelled: Lean's derived `FromJson`
+          -- reads a missing one as `null` rather than as the structure's default, so an envelope
+          -- short one field is an infrastructure failure, not an empty array.
+          "#!/bin/sh\njson='{\"artifact\":null,\"degradations\":[],\
+       \"diagnostics\":[\"forced validation rejection\"]}'\n\
        if [ -n \"$6\" ]; then printf '%s\\n' \"$json\" >\"$6\"; else printf '%s\\n' \"$json\"; fi\n"
       writeFile (work / "stale-hook") "#!/bin/sh\nprintf '\\n-- concurrent change\\n' >>\"$1\"\n"
       writeFile (work / "crash-hook") "#!/bin/sh\nexit 1\n"

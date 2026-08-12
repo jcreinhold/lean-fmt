@@ -48,6 +48,13 @@ structure AnalysisEnvelope where
   formatFailure? : Option FormatterFailure := none
   canonical? : Option CanonicalLayout := none
   validationFailure? : Option ValidationFailure := none
+  /-- Every failure a retry worked around by emitting one command verbatim, in the order they were
+  met. A canonical layout with a non-empty array here is a layout with holes in it: the file
+  formatted, and one or more commands were published as the bytes they already were.
+
+  `formatFailure?` and `validationFailure?` keep their meanings -- they say the file did not
+  format -- so a defect that used to refuse would otherwise leave no typed record at all. -/
+  degradations : Array ValidationFailure := #[]
   diagnostics : Array String := #[]
   deriving Lean.ToJson, Lean.FromJson
 
@@ -197,11 +204,45 @@ private def appendDocument (document? : Option Doc) (next : Doc) : Option Doc :=
     | some document => document ++ next
     | none => next
 
+/-- The source span one command owns in whole-module composition: its own leading trivia through the
+byte before the next command's. The spans tile `[headerStop, terminalStop)` with no gap and no
+overlap, which is what makes an offset in a candidate attributable to exactly one command, and what
+makes a command's own bytes a drop-in for its layout.
+
+`buildFormatDraft` marks each command with the span from here, so the two cannot drift: a unit that
+disagreed with its mark would attribute a divergence to one command and re-emit another. -/
+private def commandUnits (source : LosslessSource) (commands : Array LiveCommand) :
+    Array SourceRange :=
+  commands.mapIdx fun index command =>
+    let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
+    let stop :=
+      match commands[index + 1]? with
+      | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
+      | none => source.terminalStop
+    ⟨start, stop⟩
+
+/-- Which command owns a normalized-source offset, or none for the header, the tail, and the gap in
+front of the first command's leading trivia -- the regions no command can be made to re-emit. -/
+private def commandOf? (units : Array SourceRange) (offset : Nat) : Option Nat :=
+  units.findIdx? fun unit => unit.start <= offset && offset < unit.stop
+
+/-- How many extra drafts one file may pay for before it refuses. Two: the first covers a single
+command the toolchain cannot lay out, the second the case where emitting that one verbatim uncovers
+another. Past that the file is not one bad command and the failure is worth reporting whole. -/
+private def maxDraftRetries : Nat :=
+  2
+
+/-- A refusal from one draft, with the command that produced it. `command?` is `none` for the
+header, which names no index a retry could force. -/
+private structure DraftFailure where
+  command? : Option Nat
+  failure : FormatterFailure
+
 private def buildFormatDraft (normalized : String) (source : LosslessSource)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (ownership : CommentOwnership)
     (header : Lean.Syntax) (headerEnv : Lean.Environment) (headerOptions : Lean.Options)
-    (commands : Array LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ()) :
-    IO (Except FormatterFailure FormatDraft) := do
+    (commands : Array LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ())
+    (forced : Std.HashSet Nat := ∅) : IO (Except DraftFailure FormatDraft) := do
   let bytes := normalized.toUTF8
   let headerRange : SourceRange := ⟨0, source.headerStop⟩
   let mut document? : Option Doc := none
@@ -229,7 +270,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       | .ok formatted =>
         pure formatted
       | .error failure =>
-        return .error failure
+        return .error { command? := none, failure }
     registryNodes := registryNodes + formatted.document.size
     match formatted.trace.resolution with
     | .explicit _ =>
@@ -242,16 +283,15 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
     document? :=
       appendDocument document? <| Doc.mark headerRange (formatted.document ++ headerSeparator)
   let mut sequence := Formatter.Command.sequence
+  let units := commandUnits source commands
   for h : index in [0:commands.size] do
     checkCancelled
     let command := commands[index]
     let (nextSequence, placement) := Formatter.Command.place sequence command.stx
     sequence := nextSequence
-    let start := (LosslessSource.leadingStart? command.stx).getD source.headerStop
-    let stop :=
-      match commands[index + 1]? with
-      | some next => (LosslessSource.leadingStart? next.stx).getD source.terminalStop
-      | none => source.terminalStop
+    let unit := units[index]!
+    let start := unit.start
+    let stop := unit.stop
     let hasTail := source.terminalStop < source.normalizedBytes
     let preserveFinalNewline := index + 1 == commands.size && !hasTail && normalized.endsWith "\n"
     let leading := if placement.blankBefore then Doc.hard else Doc.empty
@@ -270,6 +310,24 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
             (leading ++ Doc.verbatim (normalizedSlice bytes suppressed) ++ boundaryTail ++
               separator)
       continue
+    -- A command the caller forced: its own bytes, in place of a layout that failed validation
+    -- somewhere the failure could be attributed here. This composes exactly like the directive
+    -- above it, because it means the same thing -- the command's slice is the unit, and the blank
+    -- padding around it is still the composer's canonical boundary, not the source's.
+    if forced.contains index then
+      verbatimCommands := verbatimCommands + 1
+      -- One counter per syntax kind. Over a corpus this is what names the shapes the toolchain's
+      -- printer cannot spell; a single refusal per file could never say which kind was at fault.
+      recordCount s!"verbatim_kind_{command.stx.getKind}" 1
+      document? :=
+        appendDocument document? <|
+          Doc.mark ⟨start, stop⟩
+            (leading ++
+              Doc.verbatim
+                (normalizedSlice bytes (Formatter.Trivia.verbatimUnit ownership command.stx)) ++
+              boundaryTail ++
+              separator)
+      continue
     let result ←
       Lean.Core.CoreM.toIO'
           (Formatter.NativeLayout.command normalized ownership command.stx format placement.indent)
@@ -280,7 +338,7 @@ private def buildFormatDraft (normalized : String) (source : LosslessSource)
       | .ok formatted =>
         pure formatted
       | .error failure =>
-        return .error failure
+        return .error { command? := some index, failure }
     nativeDocuments := nativeDocuments + 1
     alignedTokens := alignedTokens + formatted.metrics.tokenLeaves
     nativeCommentLeaves := nativeCommentLeaves + formatted.metrics.commentLeaves
@@ -705,15 +763,22 @@ frontend and reading the same two facts back out of its envelope. -/
 private def projectAndRender (mainModule : String) (normalized : String)
     (sourcePath : System.FilePath) (fileMap : Lean.FileMap) (headerStx : Lean.Syntax)
     (headerEnv : Lean.Environment) (headerOptions : Lean.Options) (commands : Array LiveCommand)
-    (terminal : LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ()) :
-    IO (LosslessSource × Except FormatterFailure FormatDraft) := do
+    (terminal : LiveCommand) (format : FormatConfig) (checkCancelled : IO Unit := pure ())
+    (forced : Std.HashSet Nat := ∅) : IO (LosslessSource × Except DraftFailure FormatDraft) := do
   let stxs := commands.map (·.stx)
   let projection := LosslessSource.ofSource mainModule normalized stxs (some terminal.stx)
   let ownership := commentOwnership normalized projection headerStx stxs (some terminal.stx)
   let draft ←
     buildFormatDraft normalized projection sourcePath fileMap ownership headerStx headerEnv
-        headerOptions commands format checkCancelled
+        headerOptions commands format checkCancelled forced
   return (projection, draft)
+
+/-- A candidate the reparse refused: the counter tag it is reported under, and the command whose
+bytes the refusal came from where one is known. The header and the terminal name no index -- there
+is no command to force in their place. -/
+private structure ReparseMiss where
+  tag : String
+  command? : Option Nat := none
 
 /-- Parse the candidate command by command under the contexts Lean used for the original, and accept
 only if every command comes back structurally identical.
@@ -749,36 +814,39 @@ draft. -/
 private def reparseCandidate (text : String) (sourcePath : System.FilePath)
     (headerStx : Lean.Syntax) (commands : Array LiveCommand) (terminal : LiveCommand)
     (checkCancelled : IO Unit := pure ()) :
-    IO (Except String (Lean.Syntax × Array LiveCommand × LiveCommand)) := do
+    IO (Except ReparseMiss (Lean.Syntax × Array LiveCommand × LiveCommand)) := do
   let input := Lean.Parser.mkInputContext text sourcePath.toString
   let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
   if headerMessages.hasErrors then
-    return .error "header_parse"
+    return .error { tag := "header_parse" }
   unless header.raw.structEq headerStx do
-    return .error "header"
+    return .error { tag := "header" }
   let mut state := parserState
   let mut reparsed := #[]
-  for command in commands do
+  for h : index in [0:commands.size] do
     checkCancelled
+    let command := commands[index]
     let (stx, next, messages) :=
       Lean.Parser.parseCommand input command.parse.toModuleContext state .empty
     if messages.hasErrors || next.recovering then
-      return .error "parse"
+      return .error { tag := "parse", command? := some index }
     unless stx.structEq command.stx do
       -- A terminal here means the candidate ran out of commands early, which is a different defect
       -- from a command that changed shape, and worth its own counter.
-      return .error (if Lean.Parser.isTerminalCommand stx then "short" else "structure")
+      return .error
+          { tag := if Lean.Parser.isTerminalCommand stx then "short" else "structure"
+            command? := some index }
     reparsed := reparsed.push { command with stx }
     state := next
   checkCancelled
   let (stx, _, messages) :=
     Lean.Parser.parseCommand input terminal.parse.toModuleContext state .empty
   if messages.hasErrors then
-    return .error "terminal_parse"
+    return .error { tag := "terminal_parse" }
   -- Also how a candidate with *more* commands than the original is caught: an ordinary command
   -- parsed where the terminal belongs is not `structEq` to it.
   unless stx.structEq terminal.stx do
-    return .error "terminal"
+    return .error { tag := "terminal" }
   return .ok (header.raw, reparsed, { terminal with stx })
 
 /-- Elaborate the candidate draft, starting from this run's imports when the draft asks for the same
@@ -891,151 +959,250 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     else none
   let commentSummary? :=
     if captureComments then ownership?.map (Comments.summary normalizedSource) else none
-  let (firstDraft?, formatFailure?) ←
-    if needsDraft then
-      do
-        let some ownership :=
-          ownership? | throw <| IO.userError "format draft has no comment ownership"
-        match
-          ←
-            buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
-                module.headerStx commandState.env options liveCommands format checkCancelled with
-        | .ok draft =>
-          pure (some draft, none)
+  let units := commandUnits projection liveCommands
+  -- One draft judged: reparse the candidate, render it a second time, and admit the pair. Bound as
+  -- a closure rather than lifted to a definition because it reads seventeen things from this run --
+  -- setup, module, projection, environment, options, policy -- and a definition taking all of them
+  -- would state that list twice without hiding any of it.
+  --
+  -- `forced` is a parameter and not one more capture because it changes between calls, and it has to
+  -- reach the second render as well as the first: the candidate's bytes over a forced unit are the
+  -- source's, and the reparse confirmed the two command sequences correspond index by index, so the
+  -- same index names the same command there. A second render that laid that command out again would
+  -- both re-raise the failure the first render worked around and disagree with the first draft's
+  -- bytes, failing idempotence.
+  let validateDraft (first : FormatDraft) (ownership : CommentOwnership)
+    (forced : Std.HashSet Nat) : IO (Option CanonicalLayout × Option ValidationFailure) := do
+    -- The contract entries carry no ranges, so `admit` cannot name a source offset for a comment
+    -- divergence; it reports the index and this maps it back through the ownership that produced
+    -- the entries.
+    let attributeComments (second : FormatDraft) (failure : ValidationFailure) :
+      ValidationFailure :=
+      if failure.gate == .comments && failure.source?.isNone then
+        { failure with
+          source? :=
+            (Validator.firstDivergentComment? first.commentContract second.commentContract).bind
+              fun index => (Comments.contractRange? ownership index).map (·.start) }
+      else failure
+    let candidateText := (LosslessSource.normalize first.text).1
+    let reparsed ←
+      if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
+        pure (.error { tag := "disabled" })
+      else
+        reparseCandidate candidateText sourcePath module.headerStx liveCommands terminal
+            checkCancelled
+    checkCancelled
+    match reparsed with
+    | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
+      recordCount "candidate_reparse" 1
+      -- `--no-validate`'s whole exception: the frontier was admitted (a skeleton read over
+      -- compiled evidence) and the candidate just reparsed structurally identical command by
+      -- command, so the run publishes the first draft on that evidence alone — no second
+      -- render, no `Validator.admit`, no candidate-frontend escalation. A reparse failure
+      -- below still refuses rather than escalating: the escalation *is* exact validation.
+      if validationPolicy == .structural && module.skeleton?.isSome then
+        recordCount "candidate_validation_bypass" 1
+        pure
+            (some {
+                  text := first.text
+                  sourceMap := first.sourceMap
+                  metrics := { first.metrics with frontendRuns := 1 }
+                  validation :=
+                    { frontendRuns := 1
+                      renders := 1
+                      structuralComparisons := 1
+                      idempotencePasses := 0
+                      reparsedCommands := candidateCommands.size
+                      bypassed := true } },
+              none)
+      else
+        -- The candidate's own text decides its coordinates, so its own header, commands, and file
+        -- map are what lay it out. Its final environment is the original's: that is what the
+        -- induction concluded.
+        let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
+        let (candidateProjection, second?) ←
+          projectAndRender setup.name.toString candidateText sourcePath candidateInput.fileMap
+              candidateHeader commandState.env options candidateCommands candidateTerminal format
+              checkCancelled forced
+        match second? with
         | .error failure =>
-          pure (none, some failure)
-    else
-      pure (none, none)
-  let (canonical?, validationFailure?) ←
-    if validateFormatDraft then
-      do
-        let some first := firstDraft? |
-          match formatFailure? with
-          | some failure =>
-            pure
-                (none,
-                  some
-                    { gate := .formatter
-                      detail := failure.detail })
-          | none =>
-            pure
-                (none,
-                  some
-                    { gate := .formatter
-                      detail := "format draft was not produced" })
-        let candidateText := (LosslessSource.normalize first.text).1
-        let reparsed ←
-          if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
-            pure (.error "disabled")
-          else
-            reparseCandidate candidateText sourcePath module.headerStx liveCommands terminal
-                checkCancelled
-        checkCancelled
-        match reparsed with
-        | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
-          recordCount "candidate_reparse" 1
-          -- `--no-validate`'s whole exception: the frontier was admitted (a skeleton read over
-          -- compiled evidence) and the candidate just reparsed structurally identical command by
-          -- command, so the run publishes the first draft on that evidence alone — no second
-          -- render, no `Validator.admit`, no candidate-frontend escalation. A reparse failure
-          -- below still refuses rather than escalating: the escalation *is* exact validation.
-          if validationPolicy == .structural && module.skeleton?.isSome then
-            recordCount "candidate_validation_bypass" 1
-            pure
-                (some {
-                      text := first.text
-                      sourceMap := first.sourceMap
-                      metrics := { first.metrics with frontendRuns := 1 }
-                      validation :=
-                        { frontendRuns := 1
-                          renders := 1
-                          structuralComparisons := 1
-                          idempotencePasses := 0
-                          reparsedCommands := candidateCommands.size
-                          bypassed := true } },
-                  none)
-          else
-            -- The candidate's own text decides its coordinates, so its own header, commands, and file
-            -- map are what lay it out. Its final environment is the original's: that is what the
-            -- induction concluded.
-            let candidateInput := Lean.Parser.mkInputContext candidateText sourcePath.toString
-            let (candidateProjection, second?) ←
-              projectAndRender setup.name.toString candidateText sourcePath candidateInput.fileMap
-                  candidateHeader commandState.env options candidateCommands candidateTerminal
-                  format checkCancelled
-            match second? with
-            | .error failure =>
-              pure (none, some { gate := .formatter, detail := failure.detail })
-            | .ok second =>
-              if !candidateProjection.validFor candidateText then
-                pure
-                    (none,
-                      some
-                        { gate := .structure
-                          detail :=
-                            "reparsed candidate did not project losslessly over its own bytes" })
-              else
-                match
-                  Validator.admit normalizedSource projection first candidateProjection second
-                    { frontendRuns := 1, reparsedCommands := candidateCommands.size }
-                    format.reflowComments with
-                | .ok layout =>
-                  pure (some layout, none)
-                | .error failure =>
-                  pure (none, some failure)
-        | .error tag =>
-          recordCount s!"candidate_miss_{tag}" 1
-          if validationPolicy == .structural then
+          -- The reparse confirmed command by command, so the candidate's indices are the
+          -- original's and the failing one names a source unit here.
+          pure
+              (none,
+                some
+                  { gate := .formatter
+                    detail := failure.failure.detail
+                    source? := failure.command?.bind (units[·]?.map (·.start)) })
+        | .ok second =>
+          if !candidateProjection.validFor candidateText then
             pure
                 (none,
                   some
                     { gate := .structure
                       detail :=
-                        s!"candidate reparse refused under --no-validate ({tag}); \
-                      rerun without the flag for exact validation" })
+                        "reparsed candidate did not project losslessly over its own bytes" })
           else
-            let (candidateInput, candidateModule) ←
-              candidateFrontend setup module first.text sourcePath trackSnapshot?
-            checkCancelled
-            let candidate ←
-              analyzeSnapshot setup first.text sourcePath candidateInput candidateModule
-                  (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
-                  (checkCancelled := checkCancelled)
-            if !candidate.diagnostics.isEmpty then
-              match <- IO.getEnv "LEAN_FMT_DUMP_REJECTED" with
-              | some dumpPath =>
-                IO.FS.writeFile dumpPath first.text
-              | none =>
-                pure ()
-              pure
-                  (none,
-                    some
-                      { gate := .diagnostics
-                        detail := String.intercalate "\n" candidate.diagnostics.toList })
-            else
-              match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
-              | some candidateArtifact, some second, none =>
-                match candidateArtifact.materialize first.text with
-                | .error error =>
-                  pure (none, some { gate := .structure, detail := error })
-                | .ok candidateMaterialized =>
-                  match
-                    Validator.admit normalizedSource projection first candidateMaterialized.source
-                      second { frontendRuns := 2 } with
-                  | .ok layout =>
-                    pure (some layout, none)
-                  | .error failure =>
-                    pure (none, some failure)
-              | _, _, some failure =>
-                pure (none, some { gate := .formatter, detail := failure.detail })
-              | _, _, _ =>
-                pure
-                    (none,
-                      some
-                        { gate := .structure
-                          detail := "candidate frontend returned no artifact or second draft" })
-    else
-      pure (none, none)
+            match
+              Validator.admit normalizedSource projection first candidateProjection second
+                { frontendRuns := 1, reparsedCommands := candidateCommands.size }
+                format.reflowComments with
+            | .ok layout =>
+              pure (some layout, none)
+            | .error failure =>
+              pure (none, some (attributeComments second failure))
+    | .error miss =>
+      recordCount s!"candidate_miss_{miss.tag}" 1
+      if !forced.isEmpty then
+        -- The escalation's nested `analyzeSnapshot` re-derives the candidate's commands from the
+        -- candidate's own bytes, so index `i` there need not name the command `forced` holds and
+        -- the degradation cannot be carried into it. A retry that still cannot reparse refuses.
+        pure
+            (none,
+              some
+                { gate := .structure
+                  detail :=
+                    s!"candidate reparse refused ({miss.tag}) with {forced.size} command(s) \
+                  emitted verbatim"
+                  source? := miss.command?.bind (units[·]?.map (·.start)) })
+      else if validationPolicy == .structural then
+        pure
+            (none,
+              some
+                { gate := .structure
+                  detail :=
+                    s!"candidate reparse refused under --no-validate ({miss.tag}); \
+                  rerun without the flag for exact validation" })
+      else
+        let (candidateInput, candidateModule) ←
+          candidateFrontend setup module first.text sourcePath trackSnapshot?
+        checkCancelled
+        let candidate ←
+          analyzeSnapshot setup first.text sourcePath candidateInput candidateModule
+              (captureFormatDraft := true) (format := format) (trackSnapshot? := trackSnapshot?)
+              (checkCancelled := checkCancelled)
+        if !candidate.diagnostics.isEmpty then
+          match <- IO.getEnv "LEAN_FMT_DUMP_REJECTED" with
+          | some dumpPath =>
+            IO.FS.writeFile dumpPath first.text
+          | none =>
+            pure ()
+          -- The messages are the candidate's own, in the candidate's coordinates, and there is no
+          -- command correspondence to map them through -- the reparse is what would have built one
+          -- and it is what failed. The reparse's own index is the attribution instead: the command
+          -- whose bytes stopped reparsing is the command whose layout the compiler then rejected.
+          pure
+              (none,
+                some
+                  { gate := .diagnostics
+                    detail := String.intercalate "\n" candidate.diagnostics.toList
+                    source? := miss.command?.bind (units[·]?.map (·.start)) })
+        else
+          match candidate.artifact?, candidate.formatDraft?, candidate.formatFailure? with
+          | some candidateArtifact, some second, none =>
+            match candidateArtifact.materialize first.text with
+            | .error error =>
+              pure (none, some { gate := .structure, detail := error })
+            | .ok candidateMaterialized =>
+              match
+                Validator.admit normalizedSource projection first candidateMaterialized.source
+                  second { frontendRuns := 2 } with
+              | .ok layout =>
+                pure (some layout, none)
+              | .error failure =>
+                pure (none, some (attributeComments second failure))
+          | _, _, some failure =>
+            pure
+                (none,
+                  some
+                    { gate := .formatter
+                      detail := failure.detail
+                      source? := miss.command?.bind (units[·]?.map (·.start)) })
+          | _, _, _ =>
+            pure
+                (none,
+                  some
+                    { gate := .structure
+                      detail := "candidate frontend returned no artifact or second draft" })
+  -- Detection is per command; refusal used to be per file. The loop below closes that gap: a
+  -- validation failure that can be blamed on one command re-renders that command as its own bytes
+  -- and tries again, and only a failure no command owns -- the header, the terminal tail, the
+  -- source map -- still takes the file down. `forced` grows strictly, so the loop is bounded twice
+  -- over, and `LEAN_FMT_STRICT_LAYOUT=1` turns it off so a defect stays bisectable.
+  let strictLayout := (← IO.getEnv "LEAN_FMT_STRICT_LAYOUT") == some "1"
+  let mut forced : Std.HashSet Nat := ∅
+  let mut retries := 0
+  let mut firstDraft? : Option FormatDraft := none
+  let mut draftFailure? : Option DraftFailure := none
+  let mut canonical? : Option CanonicalLayout := none
+  let mut validationFailure? : Option ValidationFailure := none
+  let mut firstFailure? : Option ValidationFailure := none
+  let mut degradations : Array ValidationFailure := #[]
+  for _attempt in [0:maxDraftRetries + 1] do
+    unless needsDraft do
+      break
+    checkCancelled
+    canonical? := none
+    validationFailure? := none
+    let some ownership := ownership? | throw <| IO.userError "format draft has no comment ownership"
+    let drafted ←
+      buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
+          module.headerStx commandState.env options liveCommands format checkCancelled forced
+    match drafted with
+    | .ok draft =>
+      firstDraft? := some draft
+      draftFailure? := none
+    | .error failure =>
+      firstDraft? := none
+      draftFailure? := some failure
+      validationFailure? :=
+        some
+          { gate := .formatter
+            detail := failure.failure.detail
+            source? := failure.command?.bind (units[·]?.map (·.start)) }
+    unless validateFormatDraft do
+      break
+    if let some first := firstDraft? then
+      let (admitted?, refused?) ← validateDraft first ownership forced
+      canonical? := admitted?
+      validationFailure? := refused?
+    if canonical?.isSome then
+      break
+    let some failure := validationFailure? | break
+    if firstFailure?.isNone then
+      firstFailure? := some failure
+    if strictLayout || retries == maxDraftRetries then
+      break
+    let some offset := failure.source? | break
+    let some index := commandOf? units offset | break
+    -- Forcing a command a second time would render the same bytes and re-derive the same refusal,
+    -- so a recurrence is read as misattribution rather than as a reason to stop: this command's
+    -- bytes are the source's now, and the only thing that can still move into them is what runs up
+    -- to them. A parse error reported at the head of command `i` is as likely to be `i - 1`'s
+    -- trailing bytes.
+    let some target :=
+      (if forced.contains index then if 0 < index then some (index - 1) else none
+      else some index) | break
+    if forced.contains target then
+      break
+    forced := forced.insert target
+    degradations := degradations.push failure
+    retries := retries + 1
+  if retries > 0 then
+    recordCount "draft_retry" retries
+  -- The failure a refusing file reports is the *first* attempt's, so a file that fails today fails
+  -- with a strict superset of today's message rather than with whatever the last retry produced.
+  if validationFailure?.isSome then
+    if let some first := firstFailure? then
+      validationFailure? :=
+        some
+          (if forced.isEmpty then first
+          else
+            { first with
+              detail :=
+                s!"{first.detail}; retried with {forced.size} command(s) emitted verbatim and \
+still failed" })
+  let formatFailure? := draftFailure?.map (·.failure)
   let formatDraft? := if captureFormatDraft then firstDraft? else none
   return {
       artifact? := some artifact
@@ -1043,7 +1210,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       formatDraft? := formatDraft?
       formatFailure? := formatFailure?
       canonical? := canonical?
-      validationFailure? := validationFailure? }
+      validationFailure? := validationFailure?
+      degradations := degradations }
 
 /- A digest of the module's command projection: each live command's kind and source range, in
 order, with the terminal last. Test-only (`LEAN_FMT_TEST_FRONTIER_PROJECTION`): the frontier and

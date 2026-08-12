@@ -128,6 +128,14 @@ from code or tests is gone — when you cannot find why something is the way it 
   it publishes on the structural candidate reparse alone, skipping the second render and `Validator.admit`; the reparse
   still runs and still refuses, the bypass is recorded per file, a bypassed analysis is never cached, and every other
   mode and every non-publishing `format` form rejects the flag.
+- A command whose layout no draft can get past validation is published as its own source bytes, and the rest of the file
+  formats. Detection is per command, so refusal is too: the analysis blames the failure on one command through
+  `ValidationFailure.source?`, re-renders with that command forced verbatim, and tries again, at most twice. Only a
+  failure no command owns — the header, the terminal tail, the source map — still takes the whole file down. Every
+  degradation is counted (`verbatimCommands` on the report, `verbatim_commands` under `--statistics`, one trailer line)
+  and carried typed on `AnalysisEnvelope.degradations`, because the alternative to a loud hole is a silent one.
+  `LEAN_FMT_STRICT_LAYOUT=1` restores whole-file refusal so a defect stays bisectable. A drop in infrastructure failures
+  matched by a rise in `verbatim_commands` has moved defects, not fixed them; read both.
 - Path errors name the caller's own argument, as `selected file does not exist: <arg>` does. New path-taking CLI surface
   — ranges, LSP URIs, integration entry points — pre-checks and does the same.
 - Rule selection is a projection over canonical results. It must not enter execution strategy or result-cache identity.

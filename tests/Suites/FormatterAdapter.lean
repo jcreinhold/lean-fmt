@@ -9,6 +9,11 @@ Actual imported syntax through the production exact formatter. Descriptor-derive
 structural syntax islands; explicitly registered roots enter the live registry. Both are admitted
 only after structural validation and idempotence.
 
+A root the adapter cannot lay out is where the typed `FormatterFailure` is pinned. It reaches the
+envelope's `formatFailure` only under `LEAN_FMT_STRICT_LAYOUT=1`; by default the command degrades to
+its own bytes and the failure is recorded on `degradations` instead, and both routes are asserted
+here because the flag is the only thing between them.
+
 Lane: parallel — generated fixtures live in the scratch dir and the `FormatterAdapterFixtures`
 build in the preamble is Lake-cached.
 -/
@@ -95,12 +100,16 @@ private def testMetrics (ctx : Ctx) : IO Unit := do
       (natAt? envelope [.field "artifact", .field "normalizedBytes"] |>.getD 0) sourceCursor
   ensureEq "adapter: source map does not tile the output" output.utf8ByteSize outputCursor
 
-/-- A formatter exception surfaces a typed hard failure with kind, category, range, and trace. -/
+/-- A formatter exception surfaces a typed hard failure with kind, category, range, and trace. The
+failure is the same object it always was; `LEAN_FMT_STRICT_LAYOUT=1` is what keeps it whole-file, so
+the typed surface is pinned there and the degraded route is pinned below. -/
 private def testThrowing (ctx : Ctx) : IO Unit := do
   let source := ctx.work / "Throwing.lean"
   writeFile source "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n"
   let setup ← setupFile ctx.root ctx.work source.toString
-  let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Throwing.lean" "4:100"
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "Throwing.lean" "4:100" (env :=
+        #[("LEAN_FMT_STRICT_LAYOUT", some "1")])
   ensure ((jsonAt? envelope [.field "canonical"]).isNone) "throwing: canonical escaped"
   let failure := (jsonAt? envelope [.field "formatFailure"]).getD .null
   let kind := ((jsonAt? failure [.field "trace", .field "kind"]).bind (·.getStr?.toOption)).getD ""
@@ -114,6 +123,31 @@ private def testThrowing (ctx : Ctx) : IO Unit := do
   let stop := natAt? failure [.field "range", .field "stop"] |>.getD 0
   ensure (stop > start) "throwing: empty range"
 
+/-- The same exception, without the strict flag: the one command it names is emitted as its own
+bytes and the rest of the file still formats. The degradation is recorded with the offset that
+attributed it, so a run can say which command it gave up on. -/
+private def testThrowingDegrades (ctx : Ctx) : IO Unit := do
+  let source := ctx.work / "ThrowingDegraded.lean"
+  let text := "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n"
+  writeFile source text
+  let setup ← setupFile ctx.root ctx.work source.toString
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "ThrowingDegraded.lean" "4:100"
+  let (_, output) ← Analyze.canonical envelope "throwing degraded"
+  ensureEq "throwing degraded: the verbatim command did not reproduce the source" text output
+  ensure ((jsonAt? envelope [.field "formatFailure"]).all (· == Lean.Json.null))
+      "throwing degraded: a worked-around failure still refused the file"
+  let degradations :=
+    ((jsonAt? envelope [.field "degradations"]).bind (·.getArr?.toOption)).getD #[]
+  ensureEq "throwing degraded: degradation count" 1 degradations.size
+  let degradation := degradations[0]!
+  ensureJsonAt degradation [.field "gate"] (Lean.toJson "formatter") "throwing degraded"
+  ensureContains (((degradation.getObjValAs? String "detail").toOption).getD "")
+      "adapter fixture formatter failure" "throwing degraded: detail"
+  -- 50 is `throwing_command`'s unit start; attribution landing on `open` would degrade the wrong
+  -- command and still refuse.
+  ensureJsonAt degradation [.field "source"] (Lean.toJson (50 : Nat)) "throwing degraded"
+
 /-- An unsafe extension token's normalization is replaced by the original payload. -/
 private def testInvalid (ctx : Ctx) : IO Unit := do
   let source := ctx.work / "Invalid.lean"
@@ -126,13 +160,15 @@ private def testInvalid (ctx : Ctx) : IO Unit := do
   ensureJsonAt envelope [.field "canonical", .field "metrics", .field "normalizedTokens"]
       (Lean.toJson (1 : Nat)) "invalid"
 
-/-- A formatter-only token insertion is a typed alignment refusal. -/
+/-- A formatter-only token insertion is a typed alignment refusal. Strict, for the reason on
+`testThrowing`. -/
 private def testExtraToken (ctx : Ctx) : IO Unit := do
   let source := ctx.work / "ExtraToken.lean"
   writeFile source "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nextra_token_command\n"
   let setup ← setupFile ctx.root ctx.work source.toString
   let envelope ←
-    analyzeExact ctx.root ctx.application setup source.toString "ExtraToken.lean" "4:100"
+    analyzeExact ctx.root ctx.application setup source.toString "ExtraToken.lean" "4:100" (env :=
+        #[("LEAN_FMT_STRICT_LAYOUT", some "1")])
   ensure ((jsonAt? envelope [.field "canonical"]).isNone) "extra token: canonical escaped"
   let failure := (jsonAt? envelope [.field "formatFailure"]).getD .null
   let detail := ((failure.getObjValAs? String "detail").toOption).getD ""
@@ -153,6 +189,7 @@ public def main (args : List String) : IO UInt32 := do
       let cases : Array Case :=
         #[{ name := "adapter-metrics", run := FormatterAdapter.testMetrics ctx },
           { name := "throwing", run := FormatterAdapter.testThrowing ctx },
+          { name := "throwing-degrades", run := FormatterAdapter.testThrowingDegrades ctx },
           { name := "invalid", run := FormatterAdapter.testInvalid ctx },
           { name := "extra-token", run := FormatterAdapter.testExtraToken ctx }]
       runCases "formatter-adapter" cases args

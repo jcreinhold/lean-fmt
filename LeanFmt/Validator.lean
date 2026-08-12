@@ -54,6 +54,15 @@ def ValidationGate.describe : ValidationGate → String
 structure ValidationFailure where
   gate : ValidationGate
   detail : String
+  /-- Where in the *source* the failure came from, as a normalized byte offset, when the gate can
+  name one site. A caller that knows how source bytes are divided among commands uses this to blame
+  one command instead of the file.
+
+  This module locates the divergence already -- every detail above names an index or a line -- so
+  reporting the offset costs nothing here and saves the caller from re-deriving a comparison it
+  does not own. `none` where the gate has no single site: the header, the terminal tail, and the
+  source map, which is the whole tiling rather than a place in it. -/
+  source? : Option Nat := none
   deriving Inhabited, BEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- How much candidate validation a publishing `format` run owes its result. `.exact` is the
@@ -104,8 +113,9 @@ structure CanonicalLayout where
 
 namespace Validator
 
-private def fail (gate : ValidationGate) (detail : String) : Except ValidationFailure α :=
-  .error { gate, detail }
+private def fail (gate : ValidationGate) (detail : String) (source? : Option Nat := none) :
+    Except ValidationFailure α :=
+  .error { gate, detail, source? }
 
 private def slice (bytes : ByteArray) (start stop : Nat) : ByteArray :=
   bytes.extract (min start bytes.size) (min stop bytes.size)
@@ -145,31 +155,63 @@ private def position (text : String) (offset : Nat) : String :=
   let lines := (String.Pos.Raw.extract text ⟨0⟩ ⟨min offset text.utf8ByteSize⟩).splitOn "\n"
   s!"{lines.length}:{(lines.getLast?.map (·.length)).getD 0 + 1}"
 
-/- Where two node enumerations first disagree, as a phrase to append to a count mismatch.
+/- Where two node enumerations first disagree, over the prefix they share.
 
-A count is the one structural failure that cannot name its own node -- every later index is shifted,
-so the ordered walk below reports only the first divergence, which is the one that shifted them. It
-is diagnostic only: the gate has already refused. -/
+A count mismatch is the one structural failure that cannot name its own node -- every later index is
+shifted -- so this finds the divergence that shifted them. Use `nodeDivergenceSource?` to turn the
+index into a position; the node's own range is often empty. -/
+private def firstDivergentNode? (before after : LosslessSource) : Option Nat :=
+  let shared := min before.nodes.size after.nodes.size
+  (List.range shared).find? fun index =>
+    kindOfNode before index != kindOfNode after index ||
+      before.nodes[index]!.parent != after.nodes[index]!.parent
+
+/- The source position that names a node divergence.
+
+The divergence is usually an optional slot, which is empty and carries no range, so the node's own
+`range.start` is `0` and names nothing -- neither a reader's file nor a command index. The
+enumeration is ordered, so the nearest node at or before it that does carry a range is the site in
+the *source*, which is the file a reader has open and the coordinate system the retry attributes in.
+
+Every reader of a node divergence goes through here on purpose. The message and the attribution
+disagreeing about where a divergence is has already cost one defect: the message anchored correctly
+while the attribution took the empty slot, so the file refused with a position printed in it that
+nothing had acted on. -/
+private def nodeDivergenceSource? (before : LosslessSource) (index : Nat) : Option Nat :=
+  ((List.range (index + 1)).reverse.find? fun candidate =>
+        (before.nodes[candidate]?).any fun node => node.range.start != node.range.stop).bind
+    fun candidate => (before.nodes[candidate]?).map (·.range.start)
+
+/- Where two token enumerations first disagree over their shared prefix, by owner or by spelling.
+The count-mismatch counterpart of `firstDivergentNode?`. A token always carries a real range, so
+unlike a node its index maps straight to a source offset. -/
+private def firstDivergentToken? (beforeText : String) (before : LosslessSource)
+    (afterText : String) (after : LosslessSource) : Option Nat :=
+  let beforeBytes := beforeText.toUTF8
+  let afterBytes := afterText.toUTF8
+  let shared := min before.tokens.size after.tokens.size
+  (List.range shared).find? fun index =>
+    let left := before.tokens[index]!
+    let right := after.tokens[index]!
+    left.node != right.node ||
+      slice beforeBytes left.start left.stop != slice afterBytes right.start right.stop
+
+/-- The first comment contract entry the two drafts disagree on, over their shared prefix. The
+caller maps the index onto the source's comments; this module holds no comment positions. -/
+def firstDivergentComment? (before after : Array CommentContractEntry) : Option Nat :=
+  (List.range (min before.size after.size)).find? fun index => before[index]! != after[index]!
+
+/- The node divergence as a phrase to append to a count mismatch. Diagnostic only: the gate has
+already refused. -/
 private def firstNodeDivergence (beforeText : String) (before : LosslessSource) (afterText : String)
     (after : LosslessSource) : String :=
-  let shared := min before.nodes.size after.nodes.size
-  match
-    (List.range shared).find? fun index =>
-      kindOfNode before index != kindOfNode after index ||
-        before.nodes[index]!.parent != after.nodes[index]!.parent with
+  match firstDivergentNode? before after with
   | some index =>
     let candidate := after.nodes[index]!
     let location := position afterText candidate.range.start
-    -- The divergence is usually an optional slot, which is empty and carries no range, so its own
-    -- position reads `1:1` and names nothing. The enumeration is ordered, so the nearest earlier
-    -- node that does carry a range is the site in the *source* -- which is the file a reader has
-    -- open.
     let anchor :=
-      match
-        ((List.range index).reverse.find? fun earlier =>
-          before.nodes[earlier]!.range.start != before.nodes[earlier]!.range.stop) with
-      | some earlier =>
-        s!"; after {position beforeText before.nodes[earlier]!.range.start} in source"
+      match nodeDivergenceSource? before index with
+      | some offset => s!"; after {position beforeText offset} in source"
       | none => ""
     s!"; node {index} is {kindOfNode before index} before and \
       {kindOfNode after index} at {location} after{anchor}"
@@ -189,6 +231,7 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
         fail .structure
             s!"node count changed: {before.nodes.size} -> {after.nodes.size}\
       {firstNodeDivergence beforeText before afterText after}"
+            ((firstDivergentNode? before after).bind (nodeDivergenceSource? before ·))
   for index in [0:before.nodes.size] do
     let left := before.nodes[index]!
     let right := after.nodes[index]!
@@ -198,17 +241,24 @@ def compare (beforeText : String) (before : LosslessSource) (afterText : String)
       return ←
           fail .structure
               s!"node {index} changed kind/parent: {leftKind}/{left.parent} -> {rightKind}/{right.parent}"
+              (nodeDivergenceSource? before index)
   unless before.tokens.size == after.tokens.size do
-    return ← fail .tokens s!"token count changed: {before.tokens.size} -> {after.tokens.size}"
+    return ←
+        fail .tokens s!"token count changed: {before.tokens.size} -> {after.tokens.size}"
+            ((firstDivergentToken? beforeText before afterText after).map (before.tokens[·]!.start))
   for index in [0:before.tokens.size] do
     let left := before.tokens[index]!
     let right := after.tokens[index]!
     unless left.node == right.node do
-      return ← fail .structure s!"token {index} changed owner {left.node} -> {right.node}"
+      return ←
+          fail .structure s!"token {index} changed owner {left.node} -> {right.node}"
+              (some left.start)
     let leftText := slice beforeBytes left.start left.stop
     let rightText := slice afterBytes right.start right.stop
     unless leftText == rightText do
-      return ← fail .tokens s!"token {index} ({kindOfNode before left.node}) changed spelling"
+      return ←
+          fail .tokens s!"token {index} ({kindOfNode before left.node}) changed spelling"
+              (some left.start)
 
 /-- The contract as a reflow-invariant word sequence: a standalone leading `--` prose line
 contributes its words one at a time, anything else its whole entry. With `reflow-comments` on,
@@ -260,14 +310,26 @@ def admit (beforeText : String) (before : LosslessSource) (first : FormatDraft)
     -- line the two passes first disagree on and spells both.
     let firstLines := first.text.splitOn "\n"
     let secondLines := second.text.splitOn "\n"
+    let divergent? :=
+      (List.range (min firstLines.length secondLines.length)).find? fun index =>
+        firstLines[index]! != secondLines[index]!
     let divergence :=
-      match
-        (List.range (min firstLines.length secondLines.length)).find? fun index =>
-          firstLines[index]! != secondLines[index]! with
+      match divergent? with
       | some index =>
         s!" at line {index + 1}: {repr firstLines[index]!} -> {repr secondLines[index]!}"
       | none => s!"; line counts {firstLines.length} -> {secondLines.length}"
-    return ← fail .idempotence s!"formatting the reparsed candidate changed bytes{divergence}"
+    -- The line is in the *rendered* draft, and the draft's own map is the only thing that says
+    -- which source bytes produced it. The map tiles the output, so the mark covering the line's
+    -- first byte is unique.
+    return ←
+        fail .idempotence s!"formatting the reparsed candidate changed bytes{divergence}"
+            (divergent?.bind fun index =>
+              let output :=
+                ((firstLines.take index).foldl (init := 0) fun total line =>
+                  total + line.utf8ByteSize + 1)
+              (first.sourceMap.find? fun mark =>
+                    mark.output.start <= output && output < mark.output.stop).map
+                (·.source.start))
   return {
       text := first.text
       sourceMap := first.sourceMap

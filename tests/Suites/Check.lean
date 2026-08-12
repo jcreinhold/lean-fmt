@@ -168,7 +168,12 @@ private def testPerCommandHelp (ctx : Ctx) : IO Unit := do
 
 /-- The two producers agree on Findings, and both reproduce the recorded golden byte for
 byte. The golden was recorded *before* any renderer shipped, so it is evidence and not a
-restatement of current behavior. -/
+restatement of current behavior.
+
+Re-recording it is allowed only for a field *addition*, and only after reading the diff: every
+existing key keeps its value and its position, and the new key is the whole change. A re-record that
+moves an existing value is a report that changed shape, which is what this pin exists to stop. It has
+been re-recorded once, for `verbatimCommands`. -/
 private def testProducerParity (ctx : Ctx) : IO Unit := do
   discard <|
       checkJson ctx 0

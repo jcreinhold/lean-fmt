@@ -135,6 +135,11 @@ structure FileReport where
   over an admitted syntax frontier, without the second render and `Validator.admit`. Zero on every
   default run and every non-publishing mode. -/
   validationBypassed : Nat := 0
+  /-- Commands published as their own source bytes because no layout for them survived validation.
+  The file formatted; these commands did not. Nonzero is the honest form of what used to be a
+  whole-file `infrastructure-failure`, so a run that reports a drop in those and a rise here has
+  moved the same defects, not fixed them. -/
+  verbatimCommands : Nat := 0
   deriving Inhabited, Lean.ToJson
 
 structure RunReport where
@@ -151,6 +156,8 @@ structure RunReport where
   withheldRedundant : Nat
   /-- Files published under `format --no-validate` — summed `FileReport.validationBypassed`. -/
   validationBypassed : Nat := 0
+  /-- Commands published as their own bytes — summed `FileReport.verbatimCommands`. -/
+  verbatimCommands : Nat := 0
   infrastructureFailures : Array String
   deriving Lean.ToJson
 
@@ -1400,6 +1407,18 @@ private def PreviewMode.rendersCanonical : PreviewMode → Bool
   | .check => false
   | .format | .diff => true
 
+/-- Stamp the admitted layout's verbatim-command count onto whatever report the mode produced.
+
+It is stamped in one place rather than in each report constructor because it is a property of the
+analysis, not of the mode: a command that had to keep its own bytes did so before anything decided
+whether this run writes, previews, or diffs, and `format --check` is precisely the run a CI job reads
+the count from. A report built without an admitted layout gets zero, which is the truth -- there was
+no layout to have holes in. -/
+private def withVerbatimCommands (analysis : SemanticAnalysis) (report : FileReport) : FileReport :=
+  { report with
+    verbatimCommands :=
+      ((analysis.result?.bind (·.canonical?)).map (·.metrics.verbatimCommands)).getD 0 }
+
 private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
     (analysis : SemanticAnalysis) : IO FileReport := do
@@ -1566,8 +1585,9 @@ private def summarize (modeString : String) (files : Array FileReport)
   let suppressed := files.foldl (fun total file => total + file.suppressed) 0
   let withheldRedundant := files.foldl (fun total file => total + file.withheldRedundant) 0
   let validationBypassed := files.foldl (fun total file => total + file.validationBypassed) 0
+  let verbatimCommands := files.foldl (fun total file => total + file.verbatimCommands) 0
   { mode := modeString, files, findings, changed, written, broken, unbuilt, rejected,
-    withheldUnsafe, suppressed, withheldRedundant, validationBypassed,
+    withheldUnsafe, suppressed, withheldRedundant, validationBypassed, verbatimCommands,
     infrastructureFailures := failures }
 
 /-! ## Report positions
@@ -1762,6 +1782,7 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (rende
               previewFile .format plan request.unsafeFixes ir.1 ir.2 snapshot analysis
             else formatFile plan request.unsafeFixes ir.1 ir.2 snapshot analysis
           | .diff => previewFile .diff plan request.unsafeFixes ir.1 ir.2 snapshot analysis
+    let report := withVerbatimCommands analysis report
     return {
         report
         analysis? := some analysis
@@ -1942,10 +1963,11 @@ def execute (request : RunRequest) : IO RunOutcome := do
         if let some analysis := cached? then
           files :=
             files.push
-              (←
-                withPhase "rules" <|
-                    previewFile previewMode plan request.unsafeFixes importReport.1 importReport.2
-                      snapshot analysis)
+              (withVerbatimCommands analysis
+                (←
+                  withPhase "rules" <|
+                      previewFile previewMode plan request.unsafeFixes importReport.1 importReport.2
+                        snapshot analysis))
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   -- The plugin artifact carries reconstructible syntax but never semantic diagnostics, so a

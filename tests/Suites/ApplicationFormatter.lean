@@ -9,7 +9,8 @@ Validated frontend-native layout through preview, diff, cache, and per-file publ
 --check` and `diff` admit the same candidates, a cached canonical answer is served without a
 frontend rerun, a stale member is rejected while its healthy sibling still publishes, the complete
 admitted batch publishes the previewed bytes, one elaboration-broken member does not stop another
-member's publication, and an admission refusal maps to infrastructure exit 2.
+member's publication, one unrenderable command degrades to its own bytes while the file still
+formats and caches, and a file whose failures outlast the retry bound maps to infrastructure exit 2.
 -/
 
 open LeanFmt.Test
@@ -204,10 +205,16 @@ private def testBrokenMemberPublication (ctx : Ctx) : IO Unit := do
       s!"broken member was not reported broken: {brokenFile.compress}"
 
 /-- Formatter admission refusal maps to infrastructure exit 2: the throwing custom command fails
-validation, nothing is written, and the file is reported as an infrastructure failure. -/
+validation, nothing is written, and the file is reported as an infrastructure failure.
+
+One throwing command degrades now, so the refusal is reached by exhausting the retry: three of them
+outlast the two attempts the loop is allowed. This is the case that says the retry did not turn every
+defect into silence -- a bound that stopped holding would make this file format. -/
 private def testRefusal (ctx : Ctx) : IO Unit := do
   let throwing := ctx.work / "Throwing.lean"
-  writeFile throwing "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n"
+  writeFile throwing
+      "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n\n\
+throwing_command\n\nthrowing_command\n"
   let refusal ←
     runProc ctx.application
         #["format", "--check", "--root", ctx.root.toString, "--no-cache", "--json",
@@ -226,6 +233,49 @@ private def testRefusal (ctx : Ctx) : IO Unit := do
     pure ()
   | other =>
     throw <| IO.userError s!"refusal file status changed: {repr other}"
+  ensureContains refusal.stderr "cache.draft_retry=2" "refusal"
+
+/-- The same command, once: the retry emits it as its own bytes and the file is clean. `--check` is
+the strongest form of that claim -- it exits 0 only if the published layout is the source, so the
+verbatim command reproduced its bytes exactly, blank padding included. -/
+private def testDegradedIsClean (ctx : Ctx) : IO Unit := do
+  let throwing := ctx.work / "ThrowingOnce.lean"
+  writeFile throwing "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n"
+  let result ←
+    runProc ctx.application
+        #["format", "--check", "--root", ctx.root.toString, "--no-cache", "--json",
+          throwing.toString]
+        (cwd? := some ctx.root) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensure (result.exitCode == 0)
+      s!"a degraded file did not exit 0: {result.exitCode}\n{result.stderr}"
+  ensureContains result.stderr "cache.verbatim_commands=1" "degraded"
+  let report ← parseJson result.stdout "degraded"
+  ensureJsonAt report [.field "verbatimCommands"] (Lean.toJson (1 : Nat)) "degraded"
+  let failures := (jsonAt? report [.field "infrastructureFailures"]).bind (·.getArr?.toOption)
+  ensureEq "a degraded file was still an infrastructure failure" 0 ((failures.map (·.size)).getD 0)
+  -- A layout with holes in it is an ordinary cacheable result, and the count travels with it. The
+  -- count is read off the admitted layout, so a warm run that lost it would under-report exactly the
+  -- files a corpus measurement is trying to find -- and the analyzer is pointed at `false` to prove
+  -- the second report was served rather than recomputed.
+  discard <|
+      runProc ctx.application
+        #["format", "--check", "--root", ctx.root.toString, "--json", throwing.toString] (cwd? :=
+        some ctx.root)
+  let cached ←
+    runProc ctx.application
+        #["format", "--check", "--root", ctx.root.toString, "--json", throwing.toString] (cwd? :=
+        some ctx.root) (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_FMT_TEST_ANALYZER", some "/usr/bin/false")])
+  ensureContains cached.stderr "cache.path_cache_hit=1" "degraded"
+  let cachedReport ← parseJson cached.stdout "degraded cached"
+  ensureJsonAt cachedReport [.field "verbatimCommands"] (Lean.toJson (1 : Nat)) "degraded cached"
+  -- The text summary is the only place a person who did not ask for JSON learns the file has a
+  -- hole in it. A silent degradation is the failure mode this whole mechanism could have had.
+  let text ←
+    runProc ctx.application
+        #["format", "--check", "--root", ctx.root.toString, "--no-cache", throwing.toString]
+        (cwd? := some ctx.root)
+  ensureContains text.stdout "1 command kept its original layout" "degraded"
 
 end ApplicationFormatter
 
@@ -253,5 +303,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "batch-publication", run := ApplicationFormatter.testBatchPublication ctx },
           { name := "broken-member-publication",
             run := ApplicationFormatter.testBrokenMemberPublication ctx },
-          { name := "refusal", run := ApplicationFormatter.testRefusal ctx }]
+          { name := "refusal", run := ApplicationFormatter.testRefusal ctx },
+          { name := "degraded-is-clean", run := ApplicationFormatter.testDegradedIsClean ctx }]
       runCases "application-formatter" cases args

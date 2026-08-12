@@ -15,6 +15,7 @@ public import LeanFmt.Imports
 public import LeanFmt.LanguageServer
 public import LeanFmt.Rules
 public import LeanFmt.Suppression
+public import LeanFmt.Validator
 public import Test
 
 import all LeanFmt.Analysis
@@ -32,6 +33,7 @@ import all LeanFmt.Imports
 import all LeanFmt.LanguageServer
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
+import all LeanFmt.Validator
 import all Test.Unit.Fixtures
 import all Test.Unit.Layout
 
@@ -281,10 +283,60 @@ private def testSuppression : IO Unit := do
   ensure (badFacts.malformed[0]!.fix?.map (·.applicability) == some .displayOnly)
       "the FMT901 fix is not display-only"
 
+/-- Attribution's one lookup: which command owns a source offset.
+
+This decides whether a validation failure is degraded or refused, so its *partiality* is the point.
+The units tile `[headerStop, terminalStop)` and nothing else, and an offset outside that -- a header
+gate, a terminal-tail gate -- has to come back `none`, because that is the whole of what makes a
+failure no command owns still take the file down. -/
+private def testCommandOf : IO Unit := do
+  -- Three commands over a file whose header ends at 10 and whose terminal tail starts at 40.
+  let units : Array SourceRange := #[⟨10, 20⟩, ⟨20, 33⟩, ⟨33, 40⟩]
+  ensureEq "the header is not a command" none (commandOf? units 0)
+  ensureEq "the byte before the first command is not a command" none (commandOf? units 9)
+  ensureEq "a unit's first byte" (some 0) (commandOf? units 10)
+  ensureEq "a unit's last byte" (some 0) (commandOf? units 19)
+  -- The bound is half-open on both sides, so the byte a unit ends on belongs to the next one and to
+  -- no other. An inclusive stop would attribute every boundary byte twice.
+  ensureEq "a unit's stop belongs to the next unit" (some 1) (commandOf? units 20)
+  ensureEq "the last unit's last byte" (some 2) (commandOf? units 39)
+  ensureEq "the terminal tail is not a command" none (commandOf? units 40)
+  ensureEq "past the end of the file" none (commandOf? units 4096)
+  ensureEq "a file with no commands owns no offset" none (commandOf? #[] 10)
+
+/-- The other half of attribution: which source offset a node divergence is at.
+
+A node count mismatch is the one structural failure whose own node usually carries no range -- it
+lands on an empty optional slot -- so reading `nodes[index].range.start` yields `0`, which
+`testCommandOf` above proves is unattributable. That combination silently disabled the retry on
+every count mismatch, and the two functions only compose because this one walks back to a node that
+has a position. -/
+private def testNodeDivergenceSource : IO Unit := do
+  let source := fixtureLosslessSource
+  let siteOf (nodes : Array Node) (index : Nat) : Option Nat :=
+    Validator.nodeDivergenceSource? { source with nodes := nodes } index
+  -- Kinds and parents are not read here; only the ranges are.
+  let nodes : Array Node :=
+    #[{ kind := 0, range := ⟨0, 64⟩ }, { kind := 0, range := ⟨10, 30⟩ },
+      { kind := 0, range := ⟨0, 0⟩ }, { kind := 0, range := ⟨0, 0⟩ },
+      { kind := 0, range := ⟨40, 52⟩ }]
+  ensureEq "a node that carries a range names itself" (some 10) (siteOf nodes 1)
+  ensureEq "an empty slot takes the nearest earlier positioned node" (some 10) (siteOf nodes 2)
+  ensureEq "a run of empty slots walks back past all of them" (some 10) (siteOf nodes 3)
+  ensureEq "the walk stops at the first positioned node, not the outermost" (some 40)
+      (siteOf nodes 4)
+  -- Nothing earlier carries a position, so there is no source site to name and the failure is
+  -- unattributable -- a refusal, which is what the pre-Stage-2 behaviour was for every mismatch.
+  ensureEq "an empty slot with no positioned predecessor" none
+      (siteOf #[{ kind := 0, range := ⟨0, 0⟩ }, { kind := 0, range := ⟨0, 0⟩ }] 1)
+  ensureEq "no enumeration at all" none (siteOf #[] 0)
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testLosslessSource", run := testLosslessSource },
     { name := "testRangeSelection", run := testRangeSelection },
+    { name := "testCommandOf", run := testCommandOf },
+    { name := "testNodeDivergenceSource", run := testNodeDivergenceSource },
     { name := "testSuppression", run := testSuppression }]
 
 end LeanFmt.Test.Unit.Source

@@ -27,6 +27,13 @@ recipe may use pipelines freely without turning a pipe into a way to silence CI.
 is the tool not having run properly — a bad root, a missing named file, an unresolvable workspace. A job that collapses
 them reports a broken runner as a lint failure.
 
+**A command lean-fmt cannot lay out does not fail the file.** When no layout for one command survives validation, that
+command keeps its original bytes and the rest of the file formats normally. The run says so — a trailer line, a
+`verbatim_commands=` field under `--statistics`, and `verbatimCommands` on the JSON report and on each file — and the
+exit code is whatever the rest of the run earned. Only a failure that cannot be attributed to a single command still
+exits 2. If you want those files to fail loudly instead, assert `verbatimCommands` is `0` in your job; the field is
+there so the choice is yours rather than the tool's.
+
 ## Recipe 1 — the minimal job
 
 This is what `.github/workflows/ci.yml` in this repository already runs, and the recipe to start from. It needs

@@ -542,6 +542,15 @@ def contract (normalized : String) (ownership : CommentOwnership) : Array Commen
       payload := slice bytes assignment.comment.range
       suppressed := assignment.comment.suppressed }
 
+/-- Where the comment behind contract entry `index` sits in the normalized source. `contract` maps
+`assignments` one for one, so the two are indexed alike.
+
+The entry itself carries no range on purpose: two drafts' contracts are compared for equality, and
+a position is exactly what differs between them. A caller that needs to blame a contract divergence
+on one command asks here instead. -/
+def contractRange? (ownership : CommentOwnership) (index : Nat) : Option SourceRange :=
+  (ownership.assignments[index]?).map (·.comment.range)
+
 private def assignmentComments (ownership : CommentOwnership) : Array Comment :=
   ownership.assignments.map (·.comment)
 

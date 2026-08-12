@@ -197,6 +197,31 @@ private def gateCandidateReparsed (capture : String) (expected : Nat) : Bool :=
   expected > 0 && (lines.filter (· == "cache.candidate_reparse=1")).length == expected &&
     !(lines.any (·.startsWith "cache.candidate_miss_"))
 
+/-- §1h′. The layout retry cost nothing on a run where nothing failed. Every re-render is a whole
+extra draft plus a whole extra validation, so a retry that fires when the first draft was admissible
+is the most expensive way this mechanism can be wrong, and it is invisible in a wall time on a warm
+corpus.
+
+Non-vacuity comes from `cache.candidate_reparse=`, borrowing `gateCandidateReparsed`'s reasoning: a
+capture with no reparse at all validated nothing, and a run that validated nothing trivially never
+retried. -/
+private def gateNoDraftRetry (capture : String) : Bool :=
+  let lines := capture.splitOn "\n"
+  lines.any (·.startsWith "cache.candidate_reparse=") &&
+    !(lines.any (·.startsWith "cache.draft_retry="))
+
+/-- §1h″. Where the retry does fire, it stays inside its bound and every attempt it spent bought a
+degradation.
+
+The equality is the gate. `retries ≤ bound` alone would accept a retry that degraded nothing -- the
+loop spinning on an attribution it cannot act on -- and `verbatim ≥ 1` alone would accept a
+degradation nobody paid an attempt for, which would mean the counters had stopped describing the same
+mechanism. -/
+private def gateRetryBounded (capture : String) (bound : Int) : Bool :=
+  match counter "cache.draft_retry" capture, counter "cache.verbatim_commands" capture with
+  | some retries, some verbatim => 0 < retries && retries ≤ bound && verbatim == retries
+  | _, _ => false
+
 /-- §1i. The run walked the Lake graph no more than `bound` times.
 
 The quantity a whole plan's worth of work moved, and the one a later change can quietly give back.
@@ -307,6 +332,22 @@ private def testGatesDiscriminate : IO Unit := do
   expect (!(gateCandidateReparsed reparsed 3))
       "rejects a run that validated fewer files than it was given"
   expect (!(gateCandidateReparsed healthy 0)) "rejects a capture that validated nothing"
+  -- §1h′/§1h″ the layout retry is free when nothing failed, and bounded when something did.
+  expect (gateNoDraftRetry reparsed) "accepts a validated run that never re-rendered a draft"
+  expect (!(gateNoDraftRetry (reparsed ++ "cache.draft_retry=1\n")))
+      "rejects a run that paid for a second draft"
+  expect (!(gateNoDraftRetry healthy)) "rejects a capture that validated nothing"
+  let retried := "cache.draft_retry=1\ncache.verbatim_commands=1\n"
+  expect (gateRetryBounded retried 2) "accepts one retry that degraded one command"
+  expect (!(gateRetryBounded "cache.draft_retry=3\ncache.verbatim_commands=3\n" 2))
+      "rejects three retries where the bound is two"
+  expect (!(gateRetryBounded "cache.draft_retry=2\ncache.verbatim_commands=1\n" 2))
+      "rejects a retry that bought no degradation"
+  expect (!(gateRetryBounded "cache.draft_retry=1\ncache.verbatim_commands=2\n" 2))
+      "rejects a degradation no retry paid for"
+  expect (!(gateRetryBounded retried 0)) "rejects any retry where the bound is zero"
+  expect (!(gateRetryBounded "cache.verbatim_commands=1\n" 2))
+      "rejects a capture that recorded no retry count"
   -- §1j the rendering children read their modules by skeleton.
   let skeleton := "cache.skeleton_read=1\ncache.skeleton_skipped_commands=12\n"
   expect (gateSkeletonRead skeleton 1) "accepts one file read by skeleton"

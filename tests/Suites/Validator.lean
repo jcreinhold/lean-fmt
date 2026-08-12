@@ -249,13 +249,17 @@ private def testMalformed (ctx : Ctx) : IO Unit := do
   ensureJsonAt result [.field "failure", .field "gate"] (Lean.toJson "diagnostics") label
 
 /-- A formatter exception stays a typed refusal: the adapter fixture's `throwing_command` raises,
-and the envelope carries `formatFailure.detail`, not a crash and not a canonical. -/
+and the envelope carries `formatFailure.detail`, not a crash and not a canonical. Under
+`LEAN_FMT_STRICT_LAYOUT=1`, because otherwise the command degrades to its own bytes and the file
+formats -- `formatter-adapter`'s `throwing-degrades` pins that route. -/
 private def testThrowing (ctx : Ctx) : IO Unit := do
   let label := "throwing fixture"
   let source := ctx.work / "Throwing.lean"
   writeFile source "module\n\nimport AdapterSyntax\n\nopen AdapterSyntax\n\nthrowing_command\n"
   let setup ← setupFile ctx.root ctx.work source.toString
-  let envelope ← analyzeExact ctx.root ctx.application setup source.toString "Throwing.lean" "4"
+  let envelope ←
+    analyzeExact ctx.root ctx.application setup source.toString "Throwing.lean" "4" (env :=
+        #[("LEAN_FMT_STRICT_LAYOUT", some "1")])
   ensure ((jsonAt? envelope [.field "canonical"]).isNone) s!"{label}: canonical escaped"
   ensureJsonAt envelope [.field "formatFailure", .field "detail"]
       (Lean.toJson "adapter fixture formatter failure") label

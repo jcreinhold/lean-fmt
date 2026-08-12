@@ -1110,9 +1110,36 @@ private def testStructuralAnchors : IO Unit := do
 y")
       "a signed nest under an anchor did not clamp at zero"
 
+/-- Every top-level command is placed at column zero, whatever its role and whatever came before it.
+
+This is a precondition of degrading a command to its own source bytes: those bytes carry the columns
+the source gave them, and nothing shifts them. A `place` that returned a nonzero indent for some role
+would silently move a verbatim command's continuation lines relative to its first, which reparses --
+Lean's offside rules are column-sensitive -- and so would surface as a validation failure somewhere
+else entirely.
+
+`blankBefore` is the boundary `place` does decide, and the roles below are picked to move it, so a
+`place` rewritten to compute an indent alongside it cannot pass this by accident. -/
+private def testCommandPlacement : IO Unit := do
+  let node (kind : Lean.Name) : Lean.Syntax := .node .none kind #[]
+  let kinds : Array Lean.Name :=
+    #[``Lean.Parser.Command.namespace, ``Lean.Parser.Command.end, ``Lean.Parser.Command.open,
+      ``Lean.Parser.Command.set_option, ``Lean.Parser.Command.variable,
+      ``Lean.Parser.Command.declaration, ``Lean.Parser.Command.section]
+  let mut sequence := Formatter.Command.sequence
+  let mut boundaries : Array Bool := #[]
+  for kind in kinds do
+    let (next, placement) := Formatter.Command.place sequence (node kind)
+    sequence := next
+    ensureEq s!"{kind} was not placed at column zero" 0 placement.indent
+    boundaries := boundaries.push placement.blankBefore
+  ensure (boundaries.any (· == true) && boundaries.any (· == false))
+      "the roles under test did not exercise both vertical boundaries"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testDoc", run := testDoc }, { name := "testAnchor", run := testAnchor },
+    { name := "testCommandPlacement", run := testCommandPlacement },
     { name := "testNativeOracle", run := testNativeOracle },
     { name := "testPlanLedgers", run := testPlanLedgers },
     { name := "testStructuralAnchors", run := testStructuralAnchors },

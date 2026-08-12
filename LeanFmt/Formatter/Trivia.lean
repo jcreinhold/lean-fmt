@@ -20,18 +20,29 @@ namespace LeanFmt.Internal.Formatter.Trivia
 def formatIgnoreNextText : String :=
   "-- lean-fmt: format-ignore-next"
 
-/-- Exact slice selected by a formatter directive leading this complete command. Outer blank padding
-is not part of the unit; the module composer supplies that canonical boundary. -/
+/-- The exact slice that stands in for a command whose layout is not being computed: its syntax
+together with every comment it owns. Outer blank padding is not part of the unit; the module composer
+supplies that canonical boundary, which is why this is narrower than the command's mark span.
+
+The comments have to be inside it. They are emitted by nothing else -- a command replaced by its own
+bytes never reaches `leading`/`trailing` -- so a unit that started at the syntax would drop a
+docstring or a comment written above the command. -/
+def verbatimUnit (ownership : CommentOwnership) (stx : Lean.Syntax) : SourceRange :=
+  let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
+  let stop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
+  (Comments.subtree ownership stx).foldl (init := ⟨start, stop⟩) fun range comment =>
+    ⟨min range.start comment.range.start, max range.stop comment.range.stop⟩
+
+/-- Exact slice selected by a formatter directive leading this complete command. The directive
+selects the unit; it does not bound it, so its own position is not read here -- a comment written
+above the directive is part of the same command and travels with it. -/
 def formatIgnoreNext? (ownership : CommentOwnership) (stx : Lean.Syntax) : Option SourceRange := do
   let start := stx.getRange?.map (·.start.byteIdx) |>.getD 0
-  let comments := Comments.subtree ownership stx
-  let directive ←
-    comments.find? fun comment =>
+  guard <|
+      (Comments.subtree ownership stx).any fun comment =>
         comment.kind == .line && comment.range.stop <= start &&
           (Comments.payload ownership comment).trimAscii == formatIgnoreNextText
-  let syntaxStop := stx.getRange?.map (·.stop.byteIdx) |>.getD start
-  let stop := comments.foldl (init := syntaxStop) fun stop comment => max stop comment.range.stop
-  return ⟨directive.range.start, stop⟩
+  return verbatimUnit ownership stx
 
 private def commentDocument (ownership : CommentOwnership) (comment : Comment) : Doc :=
   let payload := Comments.payload ownership comment

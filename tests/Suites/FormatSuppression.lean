@@ -6,9 +6,9 @@ public import Test
 # The format-suppression suite
 
 `format-ignore-next` copies one complete unit and canonical formatting resumes; suppression is
-idempotent at widths 20/100 and identical after CRLF normalization; header-spanning and unmatched
-formatter directives are non-silent FMT901 findings; and a final file-owned Unicode comment survives
-exactly once.
+idempotent at widths 20/100 and identical after CRLF normalization; the unit reaches back over a
+comment written above the directive; header-spanning and unmatched formatter directives are
+non-silent FMT901 findings; and a final file-owned Unicode comment survives exactly once.
 -/
 
 open LeanFmt.Test
@@ -70,6 +70,28 @@ private def testMalformedDirectives (root : System.FilePath) (application : Stri
   ensureContains messages "cannot target the module/import header" "malformed directives"
   ensureContains messages "has no following ordinary unit" "malformed directives"
 
+/-- A comment written *above* the directive belongs to the suppressed unit too. The unit runs from
+the first comment the command owns, not from the directive, so an explanatory line in front of it is
+carried through verbatim rather than left to a composer that never emits it.
+
+A docstring cannot be written above the directive: it is a child of the declaration's syntax, so the
+directive would sit inside the command's range instead of leading it, and `formatIgnoreNext?` would
+not fire at all. It goes below, where it is part of the preserved bytes. -/
+private def testLedDirective (root setup : System.FilePath) (application : String) : IO Unit := do
+  let report ←
+    analyzeExact root application setup "tests/fixtures/format-suppression/LedDirective.lean"
+        "LedDirective.lean" "4:100"
+  let (_, text) ← canonical report "led-directive"
+  ensureContains text
+      "-- Why this shape is preserved, written above the directive rather than \
+below it."
+      "led-directive"
+  ensureContains text "/-- The docstring belongs to the command, and is inside its syntax range. -/"
+      "led-directive"
+  ensureContains text "def ledPreserved(alpha:Nat):Nat:=alpha+1" "led-directive"
+  -- The command after it is still laid out, so the unit stopped where it should have.
+  ensureContains text "def ledResumed (beta : Nat) : Nat :=" "led-directive"
+
 /-- A final file-owned Unicode comment survives exactly once. -/
 private def testEofComment (root setup : System.FilePath) (application : String) : IO Unit := do
   let report ←
@@ -86,6 +108,7 @@ public def main (args : List String) : IO UInt32 := do
   withScratchDir "format-suppression" fun work => do
       let setup ← setupFile root work FormatSuppression.fixture
       let eofSetup ← setupFile root work "tests/fixtures/format-suppression/EofComment.lean"
+      let ledSetup ← setupFile root work "tests/fixtures/format-suppression/LedDirective.lean"
       let cases : Array Case :=
         #[{ name := "width-20", run := FormatSuppression.testWidth root setup application 20 },
           { name := "width-100", run := FormatSuppression.testWidth root setup application 100 },
@@ -93,6 +116,8 @@ public def main (args : List String) : IO UInt32 := do
             run := FormatSuppression.testCrlfAndWidths root setup application work },
           { name := "malformed-directives",
             run := FormatSuppression.testMalformedDirectives root application },
+          { name := "led-directive",
+            run := FormatSuppression.testLedDirective root ledSetup application },
           { name := "eof-comment",
             run := FormatSuppression.testEofComment root eofSetup application }]
       runCases "format-suppression" cases args
