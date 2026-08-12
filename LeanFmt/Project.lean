@@ -1080,9 +1080,9 @@ def externalConfigurationIdentity (workspace : Lake.Workspace) : Digest :=
 /- Identify the evaluated setup **and the formatter settings that change canonical bytes**.
 
 The `[format]` fold exists because `line-width` is a runtime key.
-Formatter identity is `(path, byteSize, mtime)` of the executable
-(`Cache.lean`), so editing the old compile-time `canonicalWidth` still invalidated — a rebuild rewrites
-the file. A *runtime* override changes output without touching the binary, so without this component
+Formatter identity is the executable's content hash (`Cache.formatterDigest`), so editing the old
+compile-time `canonicalWidth` still invalidated — a rebuild changes the bytes. A *runtime* override
+changes output without touching the binary, so without this component
 two projects on one machine at different widths would serve each other's cached `CanonicalLayout`.
 `[lint]` settings are deliberately absent: they project over an unchanged canonical result and must
 stay out of identity, as `CLAUDE.md` requires of rule selection. -/

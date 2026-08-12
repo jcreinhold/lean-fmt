@@ -119,9 +119,9 @@ structure FormatConfig where private mk ::
   /-- The render margin (`line-width`), default 100.
 
   Promoting this from the compile-time `Application.canonicalWidth` required a new cache-identity
-  input. Formatter identity is `(path, byteSize, mtime)` of the executable, so editing a *constant*
-  still invalidates — a rebuild rewrites the file — but a *runtime* override changes output without
-  touching the binary. Hence `identityString`. -/
+  input. Formatter identity is the executable's content hash (`Cache.formatterDigest`), so editing a
+  *constant* still invalidates — a rebuild changes the bytes — but a *runtime* override changes
+  output without touching the binary. Hence `identityString`. -/
   lineWidth : Nat := 100
   /-- Inline comments containing any of these phrases are pinned (`pinned-comments`), default
   `["shake: keep"]` : the formatter never moves them and never splits their line, even when the
