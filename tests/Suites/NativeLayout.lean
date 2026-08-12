@@ -381,6 +381,15 @@ private def testIslands (ctx : Ctx) : IO Unit := do
             "theorem backtrackBinder (M : Type) (T : BacktrackTheo) (hM : M   ⊨⊨")
   ensureEq "the command after a backtracked one still formats" "  Nat.add_zero n"
       (← lineAfterExact islands "theorem formatsAroundBacktrack (n : Nat) : n + 0 = n :=")
+  -- The island the walk meets while the cursor is still behind it. Before the plan ruled a cut
+  -- terminal out statically, this reported as an island defect and refused the whole file; it is a
+  -- native document that dropped a subtree, so the command degrades and its bytes stand.
+  ensureEq "an island reached with the cursor behind degrades rather than refusing"
+      "    \"`infer_probe_param` only solves goals of the form `optParam _ _` or `autoParam _ _`, \
+not {tgt}\""
+      (← lineAfterExact islands "  else throwError")
+  ensureEq "the command after a truncated island still formats" "  Nat.add_zero n"
+      (← lineAfterExact islands "theorem formatsAroundIslandTruncation (n : Nat) : n + 0 = n :=")
 
 /-- §6: offside carriers compose — `sepByIndent` covers record fields and tactic/conv sequences;
 `do`, `match`, and equation alternatives have no algebra carrier at all. -/
@@ -633,20 +642,29 @@ private def testMathlibStyle (ctx : Ctx) : IO Unit := do
   ensureEq "at width 20 no focusing dot is isolated" 0
       ((narrow.splitOn "\n").filter (fun line => line.trimAscii.copy == "·") |>.length)
 
-/-- §6a: `RootedKind.lean` is the one fixture here that must not format — its command's node
-kind names no constant. The escape the message offers has to work, or the message is advice
-nobody can take. -/
+/-- §6a: `RootedKind.lean` holds a command whose node kind names no constant, so no formatter can
+be resolved for it. The file formats anyway: that one command is emitted as its own bytes and
+counted, and the rest of the file is laid out. The pin is the *count* as much as the survival —
+a degradation that reported nothing would be indistinguishable from a command lean-fmt formatted.
+
+The directive half stays because it is a second route to the same outcome, and the only one a
+user can reach deliberately. -/
 private def testRootedKind (ctx : Ctx) : IO Unit := do
   let fixture := ctx.root / "tests" / "fixtures" / "native-layout" / "RootedKind.lean"
-  let refused ←
-    runProc ctx.application
+  let degraded ←
+    expectExit 0 "RootedKind degrades rather than refusing" ctx.application
         #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean",
           "--root", "."]
-        (input? := some (← IO.FS.readFile fixture)) (cwd? := some ctx.root)
-  ensureContains refused.stderr
-      "Lean._root_.Lean.Parser.Command.registerLabelAttr names no constant"
-      "a _root_-bearing node kind is not refused by name"
-  ensureContains refused.stderr "Lean/Elab/Syntax.lean:465" "the refusal named no upstream cause"
+        (input? := some (← IO.FS.readFile fixture)) (cwd? := some ctx.root) (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensureEq "the unresolvable command survives verbatim" 1
+      (countExact degraded.stdout "register_label_attr leanFmtRootedKindFixture")
+  ensureEq "  ... and exactly one command was emitted verbatim" 1
+      (← statFrom degraded.stderr "verbatim_commands")
+  -- The command before it is re-rendered, not passed through: its body moves to its own row.
+  -- A degradation that took the whole file verbatim would leave the source's one-line form.
+  ensureEq "the rest of the file was laid out" 1
+      (countExact degraded.stdout "def beforeTheRootedCommand : Nat :=")
   let ignored :=
     (← IO.FS.readFile fixture).replace "register_label_attr"
       "-- lean-fmt: format-ignore-next\nregister_label_attr"

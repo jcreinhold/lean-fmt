@@ -462,8 +462,7 @@ private def testAlignmentSequences : IO Unit := do
       Formatter.NativeLayout.CommandPlan.resolve source terminals #[] #[] #[] #[] #[] #[] #[] #[]
         #[] 0 with
     | .ok plan => plan
-    | .error failure =>
-      panic! s!"an ordinary terminal sequence's plan was refused: {failure.detail}"
+    | .error failure => panic! s!"an ordinary terminal sequence's plan was refused: {failure}"
   let run (native : Std.Format) := Formatter.NativeLayout.transform plan native
   let .ok (aligned, metrics, _) :=
     run (nativeSequence leaves) | throw (IO.userError "an ordinary terminal sequence was refused")
@@ -564,7 +563,7 @@ private def testPinnedRows : IO Unit := do
       | .ok plan =>
         pure plan
       | .error failure =>
-        throw (IO.userError s!"a pinned row's plan was refused: {failure.detail}")
+        throw (IO.userError s!"a pinned row's plan was refused: {failure}")
     let .ok (rendered, _) :=
       Formatter.NativeLayout.transform plan
         native | throw (IO.userError s!"a pinned row was refused: {repr layout}")
@@ -816,7 +815,7 @@ private def testPlanLedgers : IO Unit := do
     | .ok plan =>
       return plan
     | .error failure =>
-      throw (IO.userError s!"a synthetic plan was refused at resolve: {failure.detail}")
+      throw (IO.userError s!"a synthetic plan was refused at resolve: {failure}")
   let expectRefusal (label : String) (plan : Formatter.NativeLayout.CommandPlan)
     (native : Std.Format) (incomplete : Bool) (fragment : String) : IO Unit := do
     match Formatter.NativeLayout.transform plan native with
@@ -881,6 +880,28 @@ private def testPlanLedgers : IO Unit := do
                   Formatter.NativeLayout.InteriorComment))]
             #[] #[] #[] #[])
       rightAssoc false "placed 0/1 block-dangling comments"
+  -- An island that cuts a terminal is refused where the plan is built, not where the walk meets
+  -- it: `consumeIsland` cannot tell a cut range from a cursor that fell behind, and those want
+  -- opposite dispositions. `ab` is one terminal ⟨0,2⟩; the island takes its second byte.
+  let (wide, wideTerminals) := spelledTerminals #[("ab", "ab")]
+  match
+    Formatter.NativeLayout.CommandPlan.resolve wide wideTerminals #[] #[]
+      #[{ marker := "⟪cut⟫", range := ⟨1, 2⟩, text := "b" }] #[] #[] #[] #[] #[] #[] 0 with
+  | .ok _ =>
+    throw (IO.userError "an island cutting a terminal was accepted")
+  | .error detail =>
+    ensure (detail.contains "cuts terminal 0:2 in the command plan")
+        s!"the cut-terminal refusal lost its reason: {detail}"
+  -- ... and with that ruled out statically, a terminal the walk meets in front of an island is a
+  -- native document that dropped the leaves between here and the island. That is `incomplete`, so
+  -- the command degrades to its own bytes rather than taking the file down -- the disposition
+  -- `Mathlib/Tactic/InferParam.lean` needed and did not get, reported as `exact island 1164:1269
+  -- cuts terminal 1159:1163` against a correct island range.
+  expectRefusal "island cursor behind"
+      (←
+        planOf source3 terminals3 #[] #[] #[{ marker := "⟪island⟫", range := ⟨4, 5⟩, text := "c" }]
+            #[] #[] #[])
+      (Std.Format.text "⟪island⟫") true "did not spell terminal 0/3"
 
 private partial def countTag (tag : Nat) : Std.Format → Nat
   | .nil | .text _ | .line | .align _ => 0
@@ -905,7 +926,7 @@ private def testStructuralAnchors : IO Unit := do
     | .ok plan =>
       return plan
     | .error failure =>
-      throw (IO.userError s!"a synthetic anchor plan was refused at resolve: {failure.detail}")
+      throw (IO.userError s!"a synthetic anchor plan was refused at resolve: {failure}")
   let lowered (plan : Formatter.NativeLayout.CommandPlan) (native : Std.Format) : IO Doc := do
     match Formatter.NativeLayout.transform plan native with
     | .ok (format, _) =>
@@ -918,20 +939,16 @@ private def testStructuralAnchors : IO Unit := do
       0 #[⟨0, 3⟩, ⟨2, 5⟩] with
   | .ok _ =>
     throw (IO.userError "overlapping anchor intervals were accepted")
-  | .error (.unadapted detail) =>
+  | .error detail =>
     ensure (detail.contains "overlap without containment")
         s!"overlap refusal lost its reason: {detail}"
-  | .error failure =>
-    throw (IO.userError s!"overlap refused with the wrong kind: {failure.detail}")
   match
     Formatter.NativeLayout.CommandPlan.resolve source terminals #[] #[] #[] #[] #[] #[] #[] #[] #[]
       0 #[⟨2, 2⟩] with
   | .ok _ =>
     throw (IO.userError "an empty anchor interval was accepted")
-  | .error (.unadapted detail) =>
+  | .error detail =>
     ensure (detail.contains "empty") s!"empty-interval refusal lost its reason: {detail}"
-  | .error failure =>
-    throw (IO.userError s!"empty refused with the wrong kind: {failure.detail}")
   let _ ← planOf #[⟨0, 5⟩, ⟨2, 3⟩]
   -- Application: the anchor around `b` claims the deepest node with span ⟨1,2⟩ -- the text leaf,
   -- not the enclosing appends, which carry the same span only beside layout leaves.

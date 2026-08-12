@@ -2540,8 +2540,39 @@ private def groupFillBlocks (comments : Array InteriorComment) : Array CommentIt
         else (flush items block |>.push (.single comment), #[])
   flush items block
 
+/-- Why one command's native document could not be adapted, in the only distinction the caller
+acts on.
+
+`incomplete` is the toolchain's: the combinators backtrack, so a subtree the formatter cannot
+format is omitted rather than reported, and the adapter sees a document that stops short of the
+command's terminals. There is nothing here to repair — the document holds no decision about a leaf
+it never emitted — so the command degrades to its own bytes, exactly as an escaping
+`uncaught backtrack exception` does.
+
+`unadapted` is this module's: a boundary, island, or offside constraint it collected from the
+grammar went unapplied, or a comment leaked into comment-free syntax. Those are refusals, and they
+stay refusals: `Mathlib/Util/ParseCommand.lean` reported `0/2` terminals when the nested-command
+rule reached a `` `(command| …) `` body, and degrading that would have hidden the defect rather
+than reporting it. The two are told apart by which check fails, not by reading a message.
+
+This is the walk's error type, not just `transform`'s return, because `StateT σ (Except ε)` discards
+the state on error: a walk that classified its failure in `TransformState` would throw the
+classification away with everything else. It rides the error value or it does not survive. -/
+private inductive TransformFailure where
+  | incomplete (detail : String)
+  | unadapted (detail : String)
+
+private def TransformFailure.detail : TransformFailure → String
+  | .incomplete detail | .unadapted detail => detail
+
+/-- The witness `partial` needs for the walk, whose return type is a function into
+`Except TransformFailure`. It is a nonemptiness proof and nothing else: no code path reads
+`default`, and the reason-free failure it names is not one any check can produce. -/
+private instance : Inhabited TransformFailure :=
+  ⟨.unadapted ""⟩
+
 private def insertComments (dedent : Int) (rowBreak : Std.Format) (comments : Array InteriorComment)
-    (suffix : Std.Format) : StateT TransformState (Except String) Std.Format := do
+    (suffix : Std.Format) : StateT TransformState (Except TransformFailure) Std.Format := do
   let (document, atLineStart) ←
     (groupFillBlocks comments).foldlM (init := (.nil, false)) fun (document, atLineStart) item =>
         match item with
@@ -2690,7 +2721,7 @@ private partial def flattenNative : Std.Format → Except String Std.Format
   | .tag tag inner => return .tag tag (← flattenNative inner)
 
 private def finishConstraint (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   let some carrier := carrier? | return result
   let state ← get
   match result.span? with
@@ -2724,7 +2755,7 @@ needs. The deeper node claims the span first and every enclosing one declines.
 No metric of its own. The boundary that joins the bail-out onto the bar's line already counted this
 correction, and counting the second half again would report two rules where one fired. -/
 private def finishFlatten (result : Transformed) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   let state ← get
   let some span := result.span? | return result
   match state.flattened.findIdx? (· == span) with
@@ -2735,8 +2766,9 @@ private def finishFlatten (result : Transformed) :
       return result
     match flattenNative result.format with
     | .error leaf =>
-      throw
-          s!"native formatter cannot join a guarded bail-out onto the bar's line: its document \
+      throw <|
+          .unadapted
+            s!"native formatter cannot join a guarded bail-out onto the bar's line: its document \
 holds {leaf}, which flattening cannot remove"
     | .ok format =>
       set { state with appliedFlattened := state.appliedFlattened.push index }
@@ -2765,7 +2797,7 @@ comment in, and the alternative to refusing is emitting the comment at some othe
 reparsing hands it to a different owner and the comment gate refuses anyway, later and with a worse
 message. -/
 private def finishTrailing (left right : Transformed) :
-    StateT TransformState (Except String) (Option Std.Format) := do
+    StateT TransformState (Except TransformFailure) (Option Std.Format) := do
   let state ← get
   let some span := right.span? | return none
   unless left.span?.isNone && hasLineBoundary left.format do
@@ -2914,7 +2946,7 @@ private partial def wrapAnchorCore (anchorTag : Nat) (format : Std.Format) : Opt
 A body that would begin with a break is refused rather than lowered into `Doc.anchor`'s
 development-error case; `hoist?` is cleared like `finishConstraint` does. -/
 private def finishAnchors (result : Transformed) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   let some span := result.span? | return result
   let mut result := result
   for index in [0:(← get).anchors.size] do
@@ -2945,8 +2977,9 @@ private def finishAnchors (result : Transformed) :
           | some r =>
             (fullSource.toRawSubstring.drop r.start).take (min 100 (r.stop - r.start)) |>.toString
           | none => "<none>"
-        throw
-            s!"structural anchor interval {span.start}:{span.stop} has no break-free core; the \
+        throw <|
+            .unadapted
+              s!"structural anchor interval {span.start}:{span.stop} has no break-free core; the \
 scope must open at the interval's first terminal; near '{slice}'"
     else if interval.start <= span.start && span.stop <= interval.stop then
       let opens :=
@@ -2963,7 +2996,7 @@ scope must open at the interval's first terminal; near '{slice}'"
   return result
 
 private def finishNode (result : Transformed) (carrier? : Option ConstraintCarrier := none) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   finishFlatten (← finishConstraint (← finishAnchors result) carrier?)
 
 /- The unapplied island covering the terminal the transform is waiting for, if any. An island consumes
@@ -3170,7 +3203,7 @@ cancelling `nest` is computed against this point's ambient nest), no nested-comm
 (`flat`/`hard`/`elided`). A `columned` pin and a `dedented` cancellation are spelled against the
 ambient nest at this point, so hoisting them would move rows they exist to hold. -/
 private def constrainBoundary (format : Std.Format) :
-    StateT TransformState (Except String) (Std.Format × Bool) := do
+    StateT TransformState (Except TransformFailure) (Std.Format × Bool) := do
   let state ← get
   unless state.boundaryNest.any (·.1 == state.terminalIndex) do
     -- The column this row is laid out at, which inside a nested command is not `ambientNest`: every
@@ -3290,20 +3323,39 @@ private def hoistPayload? (state : TransformState) (hoistable : Bool) (boundary 
   else none
 
 private def consumeIsland (value : String) (island : ExactIsland) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   let state ← get
   let start := state.terminalIndex
   let mut stop := start
   while stop < state.terminals.size && state.terminals[stop]!.range.start < island.range.stop do
     let terminal := state.terminals[stop]!
     unless island.range.start <= terminal.range.start && terminal.range.stop <= island.range.stop do
-      throw
-          s!"exact island {island.range.start}:{island.range.stop} cuts terminal \
-{terminal.range.start}:{terminal.range.stop}"
+      -- `CommandPlan.resolve` proved no terminal straddles an island, so a terminal in this window
+      -- that the island does not contain lies wholly in front of it -- the cursor is behind, because
+      -- the native document never spelled the terminals between here and the island. That is a
+      -- dropped subtree seen from the first check that trips over it, not a defect in the plan:
+      -- `Mathlib/Tactic/InferParam.lean` reported island `1164:1269` against terminal `1159:1163`,
+      -- the `else` in front of a `throwError`, and the island's range was exactly right.
+      --
+      -- The disjunct that remains is the invariant restated at the point of use, not a second
+      -- classifier: if it ever fires, `resolve`'s proof is wrong and a refusal says so.
+      if terminal.range.stop <= island.range.start then
+        throw <|
+            .incomplete
+              s!"native formatter did not spell terminal {stop}/{state.terminals.size} \
+({terminal.range.start}:{terminal.range.stop}) before exact island \
+{island.range.start}:{island.range.stop}; nearby: {nearbyTerminals state}; recent native leaves: \
+{repr state.recentNativeLeaves}"
+      else
+        throw <|
+            .unadapted
+              s!"exact island {island.range.start}:{island.range.stop} cuts terminal \
+{terminal.range.start}:{terminal.range.stop}, which the command plan ruled out"
     stop := stop + 1
   if start == stop then
-    throw
-        s!"exact island {island.range.start}:{island.range.stop} contains no terminal at index \
+    throw <|
+        .unadapted
+          s!"exact island {island.range.start}:{island.range.stop} contains no terminal at index \
 {start}/{state.terminals.size}; nearby: {nearbyTerminals state}; recent native leaves: \
 {repr state.recentNativeLeaves}"
   let (leading, trailing) := splitPadding value
@@ -3362,7 +3414,7 @@ the previous terminal, the island lands inside the bail-out's own node, the flat
 The separator evidence is the same as `transformText`'s pending path: the source gap between the
 previous terminal and the island, as a boolean, spelled `.line` so the renderer owns the break. -/
 private partial def placeDroppedIslandsAfter (result : Transformed) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   let state ← get
   let pending? :=
     state.terminals[state.terminalIndex]?.bind fun terminal =>
@@ -3392,7 +3444,7 @@ private partial def placeDroppedIslandsAfter (result : Transformed) :
           hoist? := none }
 
 private def transformOrdinaryText (value : String) :
-    StateT TransformState (Except String) Transformed := do
+    StateT TransformState (Except TransformFailure) Transformed := do
   let state ← get
   if value.trimAscii.isEmpty then
     set
@@ -3429,15 +3481,18 @@ private def transformOrdinaryText (value : String) :
   else
     let some terminal := state.terminals[state.terminalIndex]? |
       if commentText value then
-        throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
+        throw <|
+            .unadapted s!"comment-free native syntax emitted an interior comment leaf {repr value}"
       else
-        throw
-            s!"native formatter emitted extra text leaf {repr value} after \
+        throw <|
+            .unadapted
+              s!"native formatter emitted extra text leaf {repr value} after \
 {state.terminalIndex} terminals; nearby: {nearbyTerminals state}"
     -- `withoutTrivia` removes every comment the formatter could re-emit from `SourceInfo`, so a
     -- comment leaf is admissible only where the source spells a doc comment as syntax.
     if commentText value && !commentText terminal.sourceSpelling then
-      throw s!"comment-free native syntax emitted an interior comment leaf {repr value}"
+      throw <|
+          .unadapted s!"comment-free native syntax emitted an interior comment leaf {repr value}"
     let nativePayload := value.trimAscii.copy
     let normalized :=
       nativePayload != terminal.syntaxSpelling && nativePayload != terminal.sourceSpelling
@@ -3463,7 +3518,8 @@ private def transformOrdinaryText (value : String) :
                   hoistPayload? state hoistable boundary
                     (.append (.text terminal.sourceSpelling) (.text trailing)) })
 
-private def transformText (value : String) : StateT TransformState (Except String) Transformed := do
+private def transformText (value : String) :
+    StateT TransformState (Except TransformFailure) Transformed := do
   let state ← get
   set { state with recentNativeLeaves := rememberNativeLeaf state.recentNativeLeaves value }
   let state ← get
@@ -3509,7 +3565,8 @@ private def transformText (value : String) : StateT TransformState (Except Strin
     | none =>
       transformOrdinaryText value
 
-private partial def transformNative : Std.Format → StateT TransformState (Except String) Transformed
+private partial def transformNative :
+    Std.Format → StateT TransformState (Except TransformFailure) Transformed
   | .nil => do
     modify fun state =>
         { state with
@@ -3825,27 +3882,6 @@ private def boundaryTable (terminals : Array Terminal) (starts : Array (Nat × B
       | none => .ok (table.push (index, layout))
     | none => .ok table
 
-/-- Why one command's native document could not be adapted, in the only distinction the caller
-acts on.
-
-`incomplete` is the toolchain's: the combinators backtrack, so a subtree the formatter cannot
-format is omitted rather than reported, and the adapter sees a document that stops short of the
-command's terminals. There is nothing here to repair — the document holds no decision about a leaf
-it never emitted — so the command degrades to its own bytes, exactly as an escaping
-`uncaught backtrack exception` does.
-
-`unadapted` is this module's: a boundary, island, or offside constraint it collected from the
-grammar went unapplied, or a comment leaked into comment-free syntax. Those are refusals, and they
-stay refusals: `Mathlib/Util/ParseCommand.lean` reported `0/2` terminals when the nested-command
-rule reached a `` `(command| …) `` body, and degrading that would have hidden the defect rather
-than reporting it. The two are told apart by which check fails, not by reading a message. -/
-private inductive TransformFailure where
-  | incomplete (detail : String)
-  | unadapted (detail : String)
-
-private def TransformFailure.detail : TransformFailure → String
-  | .incomplete detail | .unadapted detail => detail
-
 /- Lower an adapted native format onto `Doc`'s native fragment, constructor by constructor, with no
 grammar evidence and no structural annotations: nothing here reads the source, the terminals, or a
 constraint; the transform above already spent all of that. The mapping is the oracle's `toDoc`
@@ -3929,7 +3965,7 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     (boundaryStarts : Array (Nat × BoundaryLayout)) (joined : Array SourceRange)
     (nestedCommandRanges : Array SourceRange) (explodedRanges : Array SourceRange)
     (headSpans : Array (Nat × TokenSpan)) (baseIndent : Nat)
-    (anchorRanges : Array SourceRange := #[]) : Except TransformFailure CommandPlan := do
+    (anchorRanges : Array SourceRange := #[]) : Except String CommandPlan := do
   let constraints :=
     constraints.map fun constraint => (constraint, spanForRange terminals constraint.range)
   -- An exact island's bytes are its whole rendering, so the adapter spells no boundary between the
@@ -3951,12 +3987,30 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
     islands.foldl (init := #[]) fun kept island =>
       if kept.any fun other : ExactIsland => other.marker == island.marker then kept
       else kept.push island
+  -- Every terminal is wholly inside an island or wholly outside it: both are ranges in one tree, and
+  -- `choiceDisagreement?` at `command` has already made the one alternative these walks read speak
+  -- for the rest. Terminals are disjoint and ordered, so only the two edges can break it and only
+  -- one terminal per edge.
+  --
+  -- The check belongs here rather than in the walk that meets it. `consumeIsland` sees a terminal
+  -- outside the island it is consuming and cannot tell a cut range from a cursor that fell behind
+  -- because the native document dropped a leaf -- and those want opposite dispositions. Deciding it
+  -- statically, where the plan is still whole, leaves the walk one meaning to report.
+  for island in islands do
+    if let some cut :=
+        terminals.find? fun terminal =>
+          (terminal.range.start < island.range.start && island.range.start < terminal.range.stop) ||
+            (terminal.range.start < island.range.stop &&
+              island.range.stop < terminal.range.stop) then
+      throw
+          s!"exact island {island.range.start}:{island.range.stop} cuts terminal \
+{cut.range.start}:{cut.range.stop} in the command plan"
   -- The island's *first* covered terminal keeps its boundary: that boundary separates the island from
   -- the token in front of it and is the adapter's, which is why the bound is strict on the left.
   let boundaryStarts :=
     boundaryStarts.filter fun (start, _) =>
       !islands.any fun island => island.range.start < start && start < island.range.stop
-  let boundaries ← (boundaryTable terminals boundaryStarts).mapError .unadapted
+  let boundaries ← boundaryTable terminals boundaryStarts
   let flattened := joined.map (spanForRange terminals)
   let nestedCommands := nestedCommandRanges.map (spanForRange terminals)
   let explodedSpans := explodedRanges.map (spanForRange terminals)
@@ -3970,7 +4024,7 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
   let mut openAnchors : Array SourceRange := #[]
   for range in sortedAnchors do
     unless range.start < range.stop do
-      throw <| .unadapted s!"structural anchor interval is empty: {range.start}:{range.stop}"
+      throw s!"structural anchor interval is empty: {range.start}:{range.stop}"
     let mut stack := openAnchors
     while h : 0 < stack.size do
       if stack[stack.size - 1].stop <= range.start then
@@ -3979,9 +4033,8 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
         break
     if let some enclosing := stack.back? then
       unless range.stop <= enclosing.stop do
-        throw <|
-            .unadapted
-              s!"structural anchor intervals overlap without containment: \
+        throw
+            s!"structural anchor intervals overlap without containment: \
 {enclosing.start}:{enclosing.stop} and {range.start}:{range.stop}"
     openAnchors := stack.push range
   let anchors :=
@@ -4023,7 +4076,7 @@ enclosing interval's. An unpaired marker (open without close, close without open
 across spines, or a break-led body) is the interval the walk could not claim, refused by index so
 the ledger can name it. -/
 private partial def isolateAnchors (plan : CommandPlan) (format : Std.Format) :
-    Except TransformFailure (Std.Format × Array Nat) := do
+    Except String (Std.Format × Array Nat) := do
   match format with
   | .append _ _ =>
     let mut applied : Array Nat := #[]
@@ -4050,10 +4103,9 @@ private partial def isolateAnchors (plan : CommandPlan) (format : Std.Format) :
           (slice plan.source ⟨first.range.start, last.range.stop⟩).toList.take 80 |> String.ofList
         | _, _ => "?"
       | none => "?"
-    let refuse (index : Nat) (why : String) : Except TransformFailure (Std.Format × Array Nat) :=
-      throw <|
-        .unadapted
-          s!"structural anchor interval {spanOf index} could not be isolated: {why}; \
+    let refuse (index : Nat) (why : String) : Except String (Std.Format × Array Nat) :=
+      throw
+        s!"structural anchor interval {spanOf index} could not be isolated: {why}; \
 near '{sourceOf index}'"
     for item in items do
       match item with
@@ -4121,7 +4173,7 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
       headSpans := plan.headSpans
       anchors := plan.anchors
       baseIndent := plan.baseIndent }
-  let (result, state) ← ((transformNative native).run initial).mapError .unadapted
+  let (result, state) ← (transformNative native).run initial
   -- The completeness check comes first, ahead of `isolateAnchors` and every ledger below, because a
   -- document that stops short says nothing about the plan: the walk never reached the entries whose
   -- application the ledgers count, so each of them reports a *consequence* of the truncation as if
@@ -4136,7 +4188,7 @@ private def transform (plan : CommandPlan) (native : Std.Format) :
         .incomplete
           s!"native formatter consumed {state.terminalIndex}/{state.terminals.size} terminals; \
 nearby: {nearbyTerminals state}; recent native leaves: {repr state.recentNativeLeaves}"
-  let (isolated, isolatedAnchors) ← isolateAnchors plan result.format
+  let (isolated, isolatedAnchors) ← (isolateAnchors plan result.format).mapError .unadapted
   let appliedAnchors :=
     (state.appliedAnchors ++ isolatedAnchors).foldl (init := #[]) fun kept index =>
       if kept.contains index then kept else kept.push index
@@ -4320,7 +4372,7 @@ alongside, which `command` still needs for the formatter registry and the `roote
 is an input to the formatter run, not a plan fact. -/
 private def CommandPlan.collect (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
     (stripped : Lean.Syntax) (format : FormatConfig) (baseIndent : Nat) :
-    Lean.CoreM (Except TransformFailure (CommandPlan × Lean.Syntax)) := do
+    Lean.CoreM (Except String (CommandPlan × Lean.Syntax)) := do
   -- One table, computed once: every column question the collectors below ask is a binary search
   -- against it, not a slice of the file's prefix per question.
   let rowStarts := Comments.rowStarts source.toUTF8
@@ -4524,60 +4576,13 @@ def command (source : String) (ownership : CommentOwnership) (stx : Lean.Syntax)
     Lean.CoreM (Except FormatterFailure Document) := do
   let trace ← Formatter.trace ownership .command stx
   let stripped := Formatter.withoutBoundaryTrivia stx
-  -- The walks below each pick one alternative of a `choice` node and assume the rest spell the
-  -- same bytes. `Syntax.reprint` verifies that instead of assuming it, and this is where lean-fmt
-  -- does the same: one check on `stripped`, which is the tree all of them walk, makes the
-  -- assumption true for all four.
-  if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
-    return .error
-        { category := .command
-          kind := stx.getKind
-          range
-          trace
-          detail :=
-            s!"choice node at {range.start}:{range.stop} spells different source in its \
-alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}" }
-  let collected ← CommandPlan.collect source ownership stx stripped format baseIndent
-  let (plan, formattedSyntax) ←
-    match collected with
-    | .ok pair =>
-      pure pair
-    | .error (.incomplete detail) | .error (.unadapted detail) =>
-      return .error
-          { category := .command
-            kind := stx.getKind
-            range := rootRange stx
-            trace
-            detail }
-  -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
-  -- a name nobody wrote, and the one that fires depends on which end is asked first.
-  if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
-    return .error
-        { category := .command
-          kind := stx.getKind
-          range := rootRange stx
-          trace
-          detail :=
-            s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
-declaration name that spelled `_root_`, which the parser constant {suffix} honoured and \
-Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it. Write \
-{repr Formatter.Trivia.formatIgnoreNextText} above the command to leave it verbatim" }
-  -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
-  -- already spells one would be indistinguishable from the placeholder standing in for protected
-  -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.
-  if let some marker :=
-      plan.islands.find? fun island =>
-        plan.terminals.any fun terminal => terminal.sourceSpelling == island.marker then
-    return .error
-        { category := .command
-          kind := stx.getKind
-          range := rootRange stx
-          trace
-          detail :=
-            s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
-cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}" }
   -- One command's own bytes, complete and validated downstream, in place of a layout the toolchain
   -- could not produce. The file still formats; `verbatimCommands` counts what it cost.
+  --
+  -- Both helpers are bound here, ahead of every exit below, rather than beside the `try` that was
+  -- their first caller: an exit that has to refuse because `degrade` is not in scope yet is a
+  -- refusal chosen by declaration order, which is how the `rootedKind` guard came to refuse a
+  -- shape whose other route already degraded.
   let degrade (detail : String) : Except FormatterFailure Document :=
     match sourceRange? stx with
     | some range =>
@@ -4594,8 +4599,43 @@ cannot tell from the placeholder that protects {marker.range.start}:{marker.rang
           range := rootRange stx
           trace
           detail := s!"{detail} (no source range for the verbatim fallback)" }
-  let refuse (detail : String) : Except FormatterFailure Document :=
-    .error { category := .command, kind := stx.getKind, range := rootRange stx, trace, detail }
+  let refuse (detail : String) (range : SourceRange := rootRange stx) :
+    Except FormatterFailure Document :=
+    .error { category := .command, kind := stx.getKind, range, trace, detail }
+  -- The walks below each pick one alternative of a `choice` node and assume the rest spell the
+  -- same bytes. `Syntax.reprint` verifies that instead of assuming it, and this is where lean-fmt
+  -- does the same: one check on `stripped`, which is the tree all of them walk, makes the
+  -- assumption true for all four.
+  if let some (range, alternative, expected, actual) := choiceDisagreement? source stripped then
+    return refuse (range := range)
+        s!"choice node at {range.start}:{range.stop} spells different source in its \
+alternatives: alternative 0 is {expected}, alternative {alternative} is {actual}"
+  let collected ← CommandPlan.collect source ownership stx stripped format baseIndent
+  let (plan, formattedSyntax) ←
+    match collected with
+    | .ok pair =>
+      pure pair
+    | .error detail =>
+      return refuse detail
+  -- Named before `formatCommand` reaches it. Both lookups this breaks fail with a message about
+  -- a name nobody wrote, and the one that fires depends on which end is asked first -- so this
+  -- check decides the *diagnosis*, not the outcome: the constant lookup it pre-empts throws
+  -- `Unknown constant`, which the catch below already treats as a toolchain formatter gap and
+  -- degrades. Refusing here would make the file's fate depend on which end asked first.
+  if let some (kind, suffix) := rootedKindNode? (← Lean.getEnv) formattedSyntax then
+    return degrade
+        s!"syntax node kind {kind} names no constant: it is a namespace prefixed onto a \
+declaration name that spelled `_root_`, which the parser constant {suffix} honoured and \
+Lean/Elab/Syntax.lean:465 did not. No formatter can be resolved for it."
+  -- A marker is matched by its spelling when the formatter hands the leaf back, so a source that
+  -- already spells one would be indistinguishable from the placeholder standing in for protected
+  -- syntax. The shape is unlikely, not impossible, and "unlikely" is not a guarantee: refuse instead.
+  if let some marker :=
+      plan.islands.find? fun island =>
+        plan.terminals.any fun terminal => terminal.sourceSpelling == island.marker then
+    return refuse
+        s!"source spells the exact-island marker {repr marker.marker}, which the formatter \
+cannot tell from the placeholder that protects {marker.range.start}:{marker.range.stop}"
   try
     let native ← Lean.PrettyPrinter.formatCommand formattedSyntax
     let native := (dropTrailingHardLine native).getD native

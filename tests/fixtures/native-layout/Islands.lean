@@ -6,6 +6,8 @@ Authors: Jacob Reinhold
 
 module
 
+public meta import Lean.Elab.Tactic
+
 /- Typed exact islands. Each case is a syntax or range class whose payload is source data rather than
 layout: a token whose bytes span lines, an interpolated string, and a quotation with an antiquotation.
 
@@ -130,6 +132,33 @@ theorem backtrackBinder (M : Type) (T : BacktrackTheo) (hM : M   ⊨⊨
         T) : True := trivial
 
 theorem formatsAroundBacktrack (n : Nat) : n + 0 = n := Nat.add_zero n
+
+/- `Mathlib/Tactic/InferParam.lean`'s tactic, transcribed. The trailing `throwError` carries an
+interpolated string, so the message is an exact island; the native document backtracks somewhere in
+the branch above and never spells the `else` in front of it, so `consumeIsland` meets terminal
+`else` while consuming an island that starts after it.
+
+That reported as `exact island 1164:1269 cuts terminal 1159:1163` -- an island defect, refusing the
+file -- when the island's range was exactly right and the document was short. `CommandPlan.resolve`
+now rules a cut out before the walk runs, which leaves the walk one reading: the cursor is behind,
+the document dropped a subtree, and the command degrades to its own bytes. The odd spacing below is
+the pin, as it is for `backtrackBinder`: it survives only because the command is verbatim. -/
+open Lean Elab Tactic Meta in
+elab "infer_probe_param" : tactic => do
+  let tgt ← getMainTarget
+  if let some val := tgt.getOptParamDefault? then
+    liftMetaTactic fun goal => do goal.assign val; pure []
+  else if let some (.const tacticDecl ..) := tgt.getAutoParamTactic? then
+    match evalSyntaxConstant (← getEnv) (← getOptions) tacticDecl with
+    | .error err => throwError err
+    | Except.ok tacticSyntax =>
+      liftMetaTactic1 fun goal => do
+        goal.replaceTargetDefEq (← goal.getType).consumeTypeAnnotations
+      evalTactic tacticSyntax
+  else throwError
+    "`infer_probe_param` only solves goals of the form `optParam _ _` or `autoParam _ _`, not {tgt}"
+
+theorem formatsAroundIslandTruncation (n : Nat) : n + 0 = n := Nat.add_zero n
 
 end NativeLayoutIslands
 
