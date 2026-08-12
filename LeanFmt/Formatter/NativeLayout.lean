@@ -4148,6 +4148,25 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
               (start < span.stop && span.stop < islandStop)
           | none => false
   let trailing := blockDangling.map fun (range, comment) => (spanForRange terminals range, comment)
+  -- The third instance of the island settle above, and the one that was missing. An island's bytes
+  -- are its whole rendering, so a comment lying inside one is *already spelled* -- and its boundary
+  -- would resolve to an island-internal terminal, which `consumeIsland` never visits, so it could
+  -- never be inserted either. Every collected comment must be inserted or the command is refused,
+  -- which is how a doc comment took `MathlibTest/Tactic/DuplicateDecls.lean` down.
+  --
+  -- `Lean.Parser.Command.docComment` is where this arises on ordinary source, and it is not a
+  -- mis-lex: the node is a three-byte `"/--"` token followed by a separately raw-lexed body, so Lean
+  -- runs `whitespace` after the token, and `whitespace` consumes `--` line comments. A payload line
+  -- beginning with `--` is genuinely that token's trailing trivia -- Lean's own `findDocString?`
+  -- drops it too -- and `protectSourceDataFrom` then wraps the whole node in an island that spells
+  -- those same bytes.
+  --
+  -- Strict on the left like the boundary settle: a comment starting where the island starts is the
+  -- island's own opener, not something inside it.
+  let comments :=
+    comments.filter fun comment =>
+      !islands.any fun island =>
+        island.range.start < comment.range.start && comment.range.stop <= island.range.stop
   let comments :=
     comments.map fun comment =>
       { comment with

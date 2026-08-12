@@ -681,6 +681,54 @@ private def testRootedKind (ctx : Ctx) : IO Unit := do
   ensureEq "  ... and the directive it names leaves the command verbatim" 1
       (countExact formatted.stdout "register_label_attr leanFmtRootedKindFixture")
 
+/-- §6b: a comment lying inside an exact island is already spelled by the island's own bytes, so the
+walk must not be asked to insert it a second time.
+
+The shape arises on ordinary source through `Lean.Parser.Command.docComment`, which is a three-byte
+doc-comment opener token followed by a separately raw-lexed body. Lean runs `whitespace` after it and
+`whitespace` consumes `--` line comments, so a payload line beginning with `--` is genuinely the
+token's trailing trivia -- Lean's own `findDocString?` drops it too -- and `protectSourceDataFrom`
+then wraps the whole node in an island spelling those same bytes. Collecting the comment is
+faithful; asking the walk to insert it is not, because its boundary resolves to an island-internal
+terminal `consumeIsland` never visits.
+
+Both shapes below degraded one command to its own bytes before the settle, at
+`verbatim_commands=1` and `draft_retry=1` apiece; the kinds they name are
+`Lean.Parser.Command.declaration` and `Lean.guardMsgsCmd`. One per command is also why
+`MathlibTest/Tactic/DuplicateDecls.lean` -- mathlib's one lean-fmt-owned failure -- refused outright
+rather than degrading: it carries three, and the retry bound is two.
+
+The counter is the assertion, not the output. Both files format to bytes that reparse either way,
+so a formats-cleanly check passes against the defect; `verbatim_commands` is the only thing that
+tells a laid-out command from a passed-through one.
+
+Absence is the pin because these counters are printed only when non-zero. That reads as a weak
+assertion on its own; `rooted-kind` above pins the same two names present, through `statFrom`, which
+throws when the line is missing. Neither case survives renaming a counter. -/
+private def testIslandComment (ctx : Ctx) : IO Unit := do
+  -- The payload as measured: a first line the lexer takes as trivia, then a body Lean does keep.
+  let payload := "/--\n-- Foo.Bar\n\nbaz : Nat\n-/\n"
+  -- `\\n` reaches the fixture as the two characters Lean's own escape needs, so the message
+  -- `#eval` prints is the payload `#guard_msgs` compares against.
+  let sources :=
+    #[("a declaration", "module\n\n" ++ payload ++ "public def islandCommentPayload : Nat :=\n  1\n"),
+      ("a #guard_msgs",
+        "module\n\npublic import Lean.Elab.GuardMsgs\npublic meta import Lean.Elab.Command\n\n"
+          ++ payload ++ "#guard_msgs (substring := true) in\n"
+          ++ "#eval IO.println \"-- Foo.Bar\\n\\nbaz : Nat\"\n")]
+  for (label, source) in sources do
+    let result ←
+      expectExit 0 s!"{label} carrying a dashed doc payload" ctx.application
+          #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean",
+            "--root", "."]
+          (input? := some source) (cwd? := some ctx.root) (env :=
+          #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+    ensureEq s!"{label} keeps the dashed payload line" 1 (countExact result.stdout "-- Foo.Bar")
+    ensureEq s!"{label} keeps the body Lean reads as the docstring" 1
+        (countExact result.stdout "baz : Nat")
+    ensureEq s!"{label} degraded no command" 0 (count result.stderr "cache.verbatim_commands=")
+    ensureEq s!"{label} needed no draft retry" 0 (count result.stderr "cache.draft_retry=")
+
 /-- §6c: the two bracketed `sepByIndentSemicolon` families hug at width 100, and at width 20 -- where
 the list must break left of the column `sepByIndent`'s inner `withPosition` saved -- they admit
 rather than refuse. `LAY-INDENTED-SEQUENCES` is what changed that, and the pins below are the rows
@@ -764,5 +812,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "offside", run := NativeLayout.testOffside ctx },
           { name := "bracketed-sequences", run := NativeLayout.testBracketedSequences ctx },
           { name := "mathlib-style", run := NativeLayout.testMathlibStyle ctx },
-          { name := "rooted-kind", run := NativeLayout.testRootedKind ctx }]
+          { name := "rooted-kind", run := NativeLayout.testRootedKind ctx },
+          { name := "island-comment", run := NativeLayout.testIslandComment ctx }]
       runCases "native-layout" cases args
