@@ -776,11 +776,12 @@ rather than of the row being laid out -- shattering at roughly half the margin w
 costs. That is the whole reason the collectors below force boundaries the document should have
 chosen for itself, and it is why none of them is a style rule.
 
-Filed as leanprover/lean4#14692 (the stranded space and the blank row) and #14715 (the measure),
-fixed together by leanprover/lean4#14693. This tree pins `leanprover/lean4:v4.33.0-rc2`; the fix
-lands in 4.34. After that bump the document answers correctly on its own, and a boundary forced here
-stops being conservative and starts over-breaking. So each of these is a *deletion* on the bump, not
-a re-tuning.
+Filed as leanprover/lean4#14692 (the stranded space and the blank row) and #14715 (the measure).
+leanprover/lean4#14693 was expected to fix both, and an earlier note here said it landed in 4.34 and
+scheduled these collectors for deletion at that bump. It did not: `Init/Data/Format/Basic.lean` and
+`Lean/Parser/Extra.lean` are byte-identical between v4.33.0 and the pinned v4.34.0-rc1, and the
+shattering reproduces on the pin. Do not delete anything on the strength of a filed fix; re-read the
+two files and run the removal test.
 
 The removal test, one clause at a time rather than one collector at a time:
 
@@ -2676,12 +2677,13 @@ with its own hard newline — so before this every `if c then` with an indented 
 space, five of them in `Mathlib/Util/Superscript.lean`. A printer has no reason to care: a trailing space
 is invisible in an error message and a re-print is never diffed against source.
 
-The mirror rule, removing a break that *follows* a hard newline, looks equally sound and is not here. It
-is not safe: `sepByIndent` spells its first item after an `align` and every later item after a
-`text "\n"`, so the mirror fires on the later items only and leaves the first one a column to their
-right — which is `checkColGe`'s reference column, so the second `where` binding parses outside the
-block. Measured on the `where` block of `Mathlib/Util/Superscript.lean:312`. A break before a newline
-cannot move a column because nothing follows it on that line; a break after one always can.
+The mirror rule -- removing a break that *follows* a row start -- is `dropLeadingBreak` below, and it
+took two tries. The first covered `text "\n"` only, which is exactly half of what `sepByIndent` spells:
+its first item lands after an `align` and every later item after a `text "\n"`, so the half-rule fired
+on the later items and left the first one a column to their right. That column is `checkColGe`'s
+reference, so the second `where` binding parsed outside the block. Measured on the `where` block of
+`Mathlib/Util/Superscript.lean:312`. The objection was to the asymmetry, not to the rule: covering both
+row starts moves every item together and the reference column moves with them.
 
 The walk stops at the first leaf that emits anything: it descends through `nest`, `group`, `tag`, and a
 provably empty sibling, and gives up at a `text` or an `align`. So the break it removes is the one
@@ -2694,6 +2696,52 @@ private partial def dropTrailingBreak : Std.Format → Option Std.Format
   | .append left right =>
     if provablyEmpty right then (dropTrailingBreak left).map (.append · right)
     else (dropTrailingBreak right).map (.append left ·)
+  | _ => none
+
+/- Whether a document leaves the cursor at the start of a row: the two ways `sepByIndent` opens one.
+
+`endsWithNewline` is `opensWithNewline` read from the other end, and asks the same thing of the same
+leaf -- only a `text` carries bytes. `closesWithForcedAlign` asks about the layout node, and the answer
+holds at every width: `be`'s `align` case takes the `!force` shortcut only when unforced
+(`Init/Data/Format/Basic.lean:312-324`), so a forced one always reaches `if k < i.indent then pad
+(i.indent - k) else pushNewline i.indent`. Both branches separate: the pad emits at least one space
+(the equal case falls to the newline), and the newline starts a row. That is what makes dropping the
+break behind either of them incapable of joining two tokens -- the reason `pushToken`'s discretionary
+space, which answers the joining question for text, is not needed here.
+
+Both descend the right spine past provably empty siblings, so a `nest` or a marker `tag` holding nothing
+does not hide the leaf that decides. -/
+private partial def endsWithNewline : Std.Format → Bool
+  | .text value => value.endsWith "\n"
+  | .nest _ inner | .group inner _ | .tag _ inner => endsWithNewline inner
+  | .append left right =>
+    if provablyEmpty right then endsWithNewline left else endsWithNewline right
+  | _ => false
+
+private partial def closesWithForcedAlign : Std.Format → Bool
+  | .align force => force
+  | .nest _ inner | .group inner _ | .tag _ inner => closesWithForcedAlign inner
+  | .append left right =>
+    if provablyEmpty right then closesWithForcedAlign left else closesWithForcedAlign right
+  | _ => false
+
+/- The same document without its first discretionary break, or `none` where the outermost thing on that
+side is not one. `dropTrailingBreak` down the other spine, with the same stopping rule.
+
+`sepByIndent`'s item parser for `whereDecls` is `ppGroup p` = `fill (nest 2 p)`, so the item's leading
+soft `line` sits *inside* a `nest 2` and no boundary can be placed at it -- a `.hard` there lands the
+item at the nest's column, not the list's. Removing it is the only spelling that reaches the column the
+`align` already chose. That is why the pair exists as a correction on the append rather than as an entry
+in `boundaryStarts`: `constrainBoundary` applies a collected layout to the first boundary leaf at a
+terminal, which here is the `align` itself, and the offending break is the one behind it. -/
+private partial def dropLeadingBreak : Std.Format → Option Std.Format
+  | .line => some .nil
+  | .nest indent inner => (dropLeadingBreak inner).map (.nest indent ·)
+  | .group inner behavior => (dropLeadingBreak inner).map (.group · behavior)
+  | .tag tag inner => (dropLeadingBreak inner).map (.tag tag ·)
+  | .append left right =>
+    if provablyEmpty left then (dropLeadingBreak right).map (.append left ·)
+    else (dropLeadingBreak left).map (.append · right)
   | _ => none
 
 /- The same document with every break removed, or the leaf that made that impossible.
@@ -3676,7 +3724,17 @@ private partial def transformNative :
       if opensWithNewline right.format then
         (dropTrailingBreak left.format).orElse fun _ => dropTrailingHardLine left.format
       else none
-    if leftFormat.isSome then
+    -- And the mirror: a discretionary break directly *behind* a row start. `sepByIndent` opens every
+    -- item's row with one of the two -- `align force` for the first, `text "\n"` for the rest -- and
+    -- then spells the item as `ppGroup`, whose leading `line` fits and flattens to a space. That space
+    -- is what put every multi-item `where` body one column right of the column the list chose, which
+    -- is `checkColGe`'s reference: in `Mathlib/Tactic/Widget/LibraryRewrite.lean` it moved a `do`
+    -- block's offside column and produced source that does not elaborate. See `dropLeadingBreak`.
+    let rightCorrection :=
+      if endsWithNewline left.format || closesWithForcedAlign left.format then
+        dropLeadingBreak right.format
+      else none
+    if leftFormat.isSome || rightCorrection.isSome then
       modify fun state =>
           { state with
             metrics := { state.metrics with redundantBreaks := state.metrics.redundantBreaks + 1 } }
@@ -3685,9 +3743,8 @@ private partial def transformNative :
     -- right appended to its rest. Anything else -- real left content, or a corrected left whose
     -- reassociation the split cannot see through -- clears it.
     let hoist? :=
-      match leftFormat with
-      | some _ => none
-      | none =>
+      if leftFormat.isSome || rightCorrection.isSome then none
+      else
         if provablyEmpty left.format then right.hoist?
         else
           match left.hoist? with
@@ -3770,7 +3827,7 @@ private partial def transformNative :
       opensBeforeLeft.reverse.foldl (init := leftFormat) fun format index =>
         .append (.tag (anchorOpenMarker index) .nil) format
     let rightFormat :=
-      closesAfterRight.reverse.foldl (init := right.format) fun format index =>
+      closesAfterRight.reverse.foldl (init := rightCorrection.getD right.format) fun format index =>
         .append format (.tag (anchorCloseMarker index) .nil)
     let rightFormat :=
       opensBeforeRight.reverse.foldl (init := rightFormat) fun format index =>

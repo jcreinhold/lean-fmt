@@ -273,9 +273,14 @@ private def testBoundaries (ctx : Ctx) : IO Unit := do
       (countExact boundaries "  /-- Doubles its argument. -/")
   ensureEq "  ... and so does the second one, whose column the first fixes" 1
       (countExact boundaries "  /-- Adds one to its argument. -/")
+  -- Two spaces, the column the fixture is committed at and `docs/style.md` documents. This read
+  -- three until `dropLeadingBreak` landed: `sepByIndent`'s `align` chose the list's column and the
+  -- item's own `ppGroup` then flattened a soft `line` in front of the binding, putting every item
+  -- one column right of the column the docstring above it got. The count is the pinned half -- a
+  -- prefix of two spaces does not match a line indented by three, so this discriminates.
   ensureEq "  ... and both bindings land on one column" 2
-      (countPrefix boundaries "   twice (n : Nat) : Nat := n + " +
-        countPrefix boundaries "   once (n : Nat) : Nat := n + ")
+      (countPrefix boundaries "  twice (n : Nat) : Nat := n + " +
+        countPrefix boundaries "  once (n : Nat) : Nat := n + ")
   -- Three runs the source spells on one line, each a list whose items the parser measures
   -- against a column no `Format` constructor names.
   ensureEq "a field's binders stay on one line however its body breaks" 1

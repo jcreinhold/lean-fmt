@@ -375,14 +375,14 @@ private def testCacheStrategies (ctx : Ctx) : IO Unit := do
       "cache tiers: FMT006 is not the superset's extra finding"
   ensureEq "the two strategies' reports diverged" artifact.stdout fallback.stdout
 where
-   cachedResult (entryText : String) (label : String) : IO Lean.Json := do
+  cachedResult (entryText : String) (label : String) : IO Lean.Json := do
     let entry ← parseJson entryText label
     let some result :=
       jsonAt? entry
         [.field "entries", .index 0, .field "analysis",
           .field "result"] | throw <| IO.userError s!"{label}: cache entry has no result"
     return result
-   codesOf (result : Lean.Json) : List String :=
+  codesOf (result : Lean.Json) : List String :=
     (((jsonAt? result [.field "findings"]).bind (·.getArr?.toOption)).getD #[]).toList.map
       fun finding => (finding.getObjValAs? String "code").toOption.getD ""
 

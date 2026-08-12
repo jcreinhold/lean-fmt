@@ -238,13 +238,13 @@ private partial def scanTrivia (source : String) (start stop : String.Pos.Raw)
         let stop' := whitespaceStop start stop
         scanTrivia source stop' stop (acc.push { kind := .whitespace, stop := stop'.byteIdx })
 where
-   whitespaceStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
+  whitespaceStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
     if pos.byteIdx >= stop.byteIdx then pos
     else if (pos.get source).isWhitespace then whitespaceStop (pos.next source) stop else pos
-   lineCommentStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
+  lineCommentStop (pos stop : String.Pos.Raw) : String.Pos.Raw :=
     if pos.byteIdx >= stop.byteIdx then pos
     else if pos.get source == '\n' then pos else lineCommentStop (pos.next source) stop
-   blockCommentStop (pos stop : String.Pos.Raw) (nesting : Nat) : String.Pos.Raw :=
+  blockCommentStop (pos stop : String.Pos.Raw) (nesting : Nat) : String.Pos.Raw :=
     if pos.byteIdx >= stop.byteIdx || nesting == 0 then pos
     else
       let current := pos.get source

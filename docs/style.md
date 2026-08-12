@@ -58,14 +58,18 @@ declaration breaks only between its parts, never inside a quoted token.
 
 ## Declarations and members
 
-`decl.signature` uses a flat declaration when it fits:
+`decl.signature` keeps the whole header on one line when it fits, and the body goes on the next line at two spaces:
 
 ```lean
-def map (f : α → β) (xs : List α) : List β := xs.map f
+def map (f : α → β) (xs : List α) : List β :=
+  xs.map f
 ```
 
-When it does not fit, the binders keep their order on continuation lines four spaces from the declaration, the result
-type breaks on its own if it has to, and a broken body starts two spaces from the declaration:
+That second line is `declaration-body`'s default, `"next-line"`. Under `"same-line"` a body that fits joins the header
+row instead — `def map (f : α → β) (xs : List α) : List β := xs.map f`. Everything below is the same either way.
+
+When the header does not fit, the binders keep their order on continuation lines four spaces from the declaration, the
+result type breaks on its own if it has to, and the body starts two spaces from the declaration:
 
 ```lean
 def map (f : α → β)

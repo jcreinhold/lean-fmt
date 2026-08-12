@@ -152,13 +152,13 @@ private partial def collectSitesFrom (bytes : ByteArray) (stx : Lean.Syntax) (de
       collectTrivia bytes info sites comments
   | .missing => (sites, comments)
 where
-   collectTrivia (bytes : ByteArray) (info : Lean.SourceInfo) (sites : Array Site)
+  collectTrivia (bytes : ByteArray) (info : Lean.SourceInfo) (sites : Array Site)
     (comments : Array Comment) : (Array Site × Array Comment) :=
     match info with
     | .original leading _ trailing _ =>
       (sites, scanTrivia bytes trailing (scanTrivia bytes leading comments))
     | _ => (sites, comments)
-   scanTrivia (bytes : ByteArray) (trivia : Substring.Raw) (comments : Array Comment) :
+  scanTrivia (bytes : ByteArray) (trivia : Substring.Raw) (comments : Array Comment) :
     Array Comment :=
     Id.run do
       let stop := min trivia.stopPos.byteIdx bytes.size

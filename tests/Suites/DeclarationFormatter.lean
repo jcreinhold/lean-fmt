@@ -30,7 +30,12 @@ private def requiredPatterns : Array FlexPattern :=
     [.wordBoundary, .lit "mutual", .wordBoundary], [.lit "def", .someWs, .lit "isEven"],
     [.lit "def", .someWs, .lit "isOdd"], [.lit "def", .someWs, .lit "countdown"],
     [.lit "termination_by"], [.lit "def", .someWs, .lit "withLocal"],
-    [.wordBoundary, .lit "where", .wordBoundary]]
+    [.lit "def", .someWs, .lit "withLocals"], [.wordBoundary, .lit "where", .wordBoundary]]
+
+/-- Lines starting with the given prefix. A prefix rather than a whole line because the column is
+what is asserted and the rest of the row moves with the margin. -/
+private def countPrefix (text pfx : String) : Nat :=
+  (text.splitOn "\n").filter (·.startsWith pfx) |>.length
 
 /-- Byte position of `needle`'s first occurrence, or none. -/
 private def positionOf? (text needle : String) : Option Nat :=
@@ -74,6 +79,20 @@ private def testWidth (root setup : System.FilePath) (application : String) (wid
     ensure (isEven < isOdd) s!"width {width}: mutual definitions reordered"
   | _, _ =>
     throw <| IO.userError s!"width {width}: mutual definitions missing"
+  -- `Term.whereDecls` items land at the list's own column, and the multi-item form lands where the
+  -- single-item form already did. `sepByIndent` spells its first item after a forced `align` and
+  -- every later one after a `text "\n"`, then wraps each in a `ppGroup` whose leading soft `line`
+  -- fits and flattens to a space -- so a multi-item clause sat one column right of a single-item
+  -- one, and right of its own docstring, until `dropLeadingBreak`. The offending space is a
+  -- flattened `line`, so the column it produced did not move with the margin: asserted at every
+  -- width because width is exactly what it was independent of.
+  for binding in ["  first (n : Nat) :", "  second (n : Nat) :"] do
+    ensureEq s!"width {width}: a `where` binding left its column" 1 (countPrefix text binding)
+  -- The single-item clause hugs the `where` row instead, as `singleField` pins for
+  -- `whereStructInst`. Asserted beside the two-item case because that is what makes the two-item
+  -- column a claim about `sepByIndent`'s `align` rather than about `where` clauses generally.
+  ensureEq s!"width {width}: the lone `where` binding left its own row" 1
+      (countPrefix text "where localValue :")
   ensureNoTrailingWhitespace s!"width {width}" text
 
 /-- The narrow-width shapes: the opaque signature and the extending structure break where the old

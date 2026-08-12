@@ -179,7 +179,7 @@ partial def run (options : Options) (generation : Nat → IO Unit) : IO Unit := 
   generation 1
   loop initial 2
 where
-   loop (lastRun : Snapshot) (counter : Nat) : IO Unit := do
+  loop (lastRun : Snapshot) (counter : Nat) : IO Unit := do
     IO.sleep options.pollMillis.toUInt32
     let observed ← observe options.root options.configPath?
     if observed == lastRun then
@@ -189,7 +189,7 @@ where
       let settled ← settle observed
       generation counter
       loop settled (counter + 1)
-   settle (candidate : Snapshot) : IO Snapshot := do
+  settle (candidate : Snapshot) : IO Snapshot := do
     IO.sleep options.pollMillis.toUInt32
     let observed ← observe options.root options.configPath?
     if observed == candidate then

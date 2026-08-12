@@ -72,4 +72,12 @@ def withLocal (value : Nat) : Nat := localValue + value
 where
   localValue : Nat := 1
 
+-- Two items, because one is the shape that hides the defect: `sepByIndent` emits its forced `align`
+-- only when the separator is a newline, which a single-item list never has -- and the single-item
+-- form above hugs the `where` row anyway, so it has no column of its own to compare.
+def withLocals (value : Nat) : Nat := first value + second value
+where
+  first (n : Nat) : Nat := n + 1
+  second (n : Nat) : Nat := n + 2
+
 end DeclarationFixture
