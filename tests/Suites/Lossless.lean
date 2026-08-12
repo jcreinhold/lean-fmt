@@ -306,6 +306,38 @@ private def expectRejection (name : String) (check : IO LeanFmt.Test.Projection.
   | some message =>
     return s!"{name}: {message}"
 
+/-- The one shape where the parser's own attribution and the projection disagree, on purpose.
+
+`hygieneInfo` rewrites an already-pushed leaf's tail info to steal its trailing whitespace, and a
+`takeLongest` that discards the hygieneInfo node rewinds the stack without undoing the write. The
+byte it stole then rides on no leaf. Mathlib reaches this through `optBinderIdent`, and the
+projection used to refuse `Mathlib/Tactic/Have.lean` and `Mathlib/Tactic/Replace.lean` outright for
+it: `rejected`, one file, exit 1, before anything was formatted.
+
+`Token.leading`'s contract says contiguity determines where a leading run begins, so the projection
+now derives the run's content that way too and the hole closes. The oracle re-tiles the *artifact's*
+raw entries, which are the parser's attribution verbatim, so it still reports the hole — and that is
+the point of asserting both halves here rather than either alone. The two records disagree because
+they are claims about different things: the oracle's is about what the compiler recorded, the
+projection's is about what the projection spells. Settled in the projection's favour, because a
+reader's file is a linear cover whatever the parser wrote down.
+
+Assert the disagreement, not just the acceptance. If a future parser stops stranding the byte this
+case goes vacuous, and the oracle's rejection is the only thing that would say so. -/
+private def testStrandedTrivia (ctx : Ctx) : IO Unit := do
+  let fixture := "tests/fixtures/check/StrandedTrivia.lean"
+  let source := ctx.root / fixture
+  let envelope ←
+    project ctx ctx.borrowedSetup.toString source.toString "StrandedTrivia" "stranded-trivia"
+  ensure (((jsonAt? envelope [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]).isEmpty
+      "the stranded-trivia fixture did not analyze"
+  let some artifact := jsonAt? envelope [.field "artifact"]
+    | fail "the stranded-trivia fixture produced no artifact; the projection refused it again"
+  let message ←
+    expectRejection "stranded trivia" <| LeanFmt.Test.Projection.checkArtifact artifact source
+  ensureContains message "hole of 1 byte(s)"
+      "the parser no longer strands a byte here; this case is vacuous"
+
 /-- The mutation battery over the unicode base and the choice fixture. -/
 private def testMutations (ctx : Ctx) : IO Unit := do
   let unicodeSource := ctx.work / "unicode.lean"
@@ -497,5 +529,6 @@ public def main (args : List String) : IO UInt32 := do
       let cases :=
         corpus ++
           #[{ name := "exotic", run := Lossless.testExotic ctx },
+            { name := "stranded-trivia", run := Lossless.testStrandedTrivia ctx },
             { name := "mutations", run := Lossless.testMutations ctx }]
       runCases "lossless" cases args

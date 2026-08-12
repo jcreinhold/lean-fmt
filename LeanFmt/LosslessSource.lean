@@ -283,6 +283,29 @@ private def leafSpan (info : Lean.SourceInfo) : Option (String.Pos.Raw × String
   | .synthetic pos endPos _ => some (pos, endPos)
   | .none => none
 
+/- Where a token's leading trivia begins, given the token the parser pushed before it.
+
+The parser spells a leading substring empty at the token's own start (`Parser/Basic.lean:594`), so
+the bytes between two tokens normally ride on the previous token's *trailing* run and `recorded` is
+already the answer. `hygieneInfoFn` (`Parser/Basic.lean:1335-1357`) breaks that: it rewrites an
+already-pushed leaf's tail info to steal that leaf's trailing whitespace, and a `takeLongest` that
+then discards the hygieneInfo node rewinds the stack and the position without undoing the write. The
+stolen bytes end up on no leaf at all, and a file the projection could represent perfectly well is
+refused instead. Mathlib's `optBinderIdent` is built on that parser, so `` `(tactic| have $n:…) ``
+is enough to hit it.
+
+`Token.leading`'s contract already says contiguity determines where a leading run begins; deriving
+the run's content the same way is what makes the contract true rather than merely intended. The
+guard keeps this a no-op whenever the parser is well behaved -- then the cursor *is* the token's own
+start -- and refuses to trust a predecessor whose own positions the projection will reject anyway. -/
+private def leadingStart (previous? : Option Token) (recorded : String.Pos.Raw) : String.Pos.Raw :=
+  match previous? with
+  | some previous =>
+    if previous.info == .original && previous.trailingStop < recorded.byteIdx then
+      ⟨previous.trailingStop⟩
+    else recorded
+  | none => recorded
+
 /- Walk one command in source order, pushing nodes before their children so a child can name its
 parent, then widening each node to the hull of the leaves beneath it. -/
 private partial def collect (source : String) (parent : Option Nat) (stx : Lean.Syntax)
@@ -317,7 +340,7 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     | .original leading pos trailing endPos =>
       let token : Token :=
         { node
-          leading := scanTrivia source leading.startPos pos
+          leading := scanTrivia source (leadingStart build.tokens.back? leading.startPos) pos
           start := pos.byteIdx
           stop := endPos.byteIdx
           trailing := scanTrivia source endPos trailing.stopPos

@@ -13,6 +13,7 @@ public import LeanFmt.Edit
 public import LeanFmt.Formatter.NativeLayout
 public import LeanFmt.Imports
 public import LeanFmt.LanguageServer
+public import LeanFmt.LosslessSource
 public import LeanFmt.Rules
 public import LeanFmt.Suppression
 public import LeanFmt.Validator
@@ -31,6 +32,7 @@ import all LeanFmt.Edit
 import all LeanFmt.Formatter.NativeLayout
 import all LeanFmt.Imports
 import all LeanFmt.LanguageServer
+import all LeanFmt.LosslessSource
 import all LeanFmt.Rules
 import all LeanFmt.Suppression
 import all LeanFmt.Validator
@@ -331,12 +333,45 @@ private def testNodeDivergenceSource : IO Unit := do
       (siteOf #[{ kind := 0, range := ⟨0, 0⟩ }, { kind := 0, range := ⟨0, 0⟩ }] 1)
   ensureEq "no enumeration at all" none (siteOf #[] 0)
 
+/-- Where a token's leading trivia begins, when the parser's own bookkeeping left a hole.
+
+The projection's tiling invariant is what makes it lossless, and a file that breaks it is refused
+outright before anything is formatted. `hygieneInfoFn` breaks it on ordinary mathlib source by
+stealing an already-pushed leaf's trailing whitespace and then being backtracked, which strands a
+byte on no leaf at all. Deriving the leading run from contiguity closes that hole; these cases pin
+that it closes *only* that hole, because widening the run any further would hand a token bytes the
+previous one already spelled. -/
+private def testLeadingStart : IO Unit := do
+  let recorded : String.Pos.Raw := ⟨64⟩
+  let startOf (previous? : Option Token) : Nat :=
+    (LosslessSource.leadingStart previous? recorded).byteIdx
+  -- The parser is well behaved: it spelled the gap on the previous token's trailing run, so the
+  -- cursor already is this token's own start and the derived run is empty, exactly as before.
+  ensureEq "a contiguous predecessor changes nothing" 64
+      (startOf (some { node := 0, start := 50, stop := 60, trailing := #[⟨.whitespace, 64⟩] }))
+  -- The defect: `have`'s trailing run was truncated to nothing, so one byte belongs to no leaf.
+  ensureEq "a truncated predecessor's stolen bytes are reclaimed" 60
+      (startOf (some { node := 0, start := 50, stop := 60 }))
+  -- The first token in the file has no predecessor; its recorded start is the header stop, which is
+  -- a position both producers can see and the only one available here.
+  ensureEq "no predecessor keeps the parser's answer" 64 (startOf none)
+  -- Never widen past what the parser recorded. A predecessor whose trailing run already runs past
+  -- this token's start is an overlap, and reading it as a leading start would spell those bytes
+  -- twice; the overlap stays visible to `validationError?` instead.
+  ensureEq "an overrunning predecessor is not trusted" 64
+      (startOf (some { node := 0, start := 50, stop := 60, trailing := #[⟨.whitespace, 70⟩] }))
+  -- A predecessor the projection will reject anyway carries no usable cursor: a `.missing` leaf
+  -- sits at 0, and scanning from there would read the whole file as this token's leading trivia.
+  ensureEq "a leaf with no original position is not a cursor" 64
+      (startOf (some { node := 0, start := 0, stop := 0, info := .missing }))
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testLosslessSource", run := testLosslessSource },
     { name := "testRangeSelection", run := testRangeSelection },
     { name := "testCommandOf", run := testCommandOf },
     { name := "testNodeDivergenceSource", run := testNodeDivergenceSource },
+    { name := "testLeadingStart", run := testLeadingStart },
     { name := "testSuppression", run := testSuppression }]
 
 end LeanFmt.Test.Unit.Source
