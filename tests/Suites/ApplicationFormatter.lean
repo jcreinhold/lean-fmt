@@ -10,8 +10,8 @@ Validated frontend-native layout through preview, diff, cache, and per-file publ
 frontend rerun, a stale member is rejected while its healthy sibling still publishes, the complete
 admitted batch publishes the previewed bytes, one elaboration-broken member does not stop another
 member's publication, one unrenderable command degrades to its own bytes while the file still
-formats and caches, and a file whose failures outlast the retry bound maps to infrastructure exit 2.
--/
+formats and caches, three commands the candidate cannot reparse degrade together in one retry, and a
+file whose failures outlast the retry bound maps to infrastructure exit 2. -/
 
 open LeanFmt.Test
 open LeanFmt.Test.Analyze
@@ -277,6 +277,43 @@ private def testDegradedIsClean (ctx : Ctx) : IO Unit := do
         (cwd? := some ctx.root)
   ensureContains text.stdout "1 command kept its original layout" "degraded"
 
+/-- Three commands the candidate's own bytes cannot reparse converge in **one** retry.
+
+This is `Mathlib/NumberTheory/Primorial.lean`'s shape, reduced: a `notation` whose `#` re-lexes
+against the numeral in front of it. Source spells `0 # = 0`; `pushToken` asks the tokenizer whether
+concatenation would re-lex as one token, `parseToken "0#"` stops inside `"0"`, and no space is
+inserted -- but `0#` then commits to the `noWs` BitVec-literal production and the candidate does not
+parse. Upstream's defect, and not one an adapter-side rule can answer, because the same evidence is
+true of `f ( x )` becoming `f (x)`.
+
+What is ours is the cost of finding all three. `testRefusal`'s throwing command fails before a draft
+exists, so the loop learns about one command per attempt there; here the draft renders and the
+*reparse* refuses, and the walk resumes past a miss to report the set. Three used to cost three
+attempts and outlast the bound of two, taking the whole file down.
+
+The retry count is the assertion. `verbatim_commands=3` alone would also hold if the loop had simply
+been given a larger bound, which is the fix this is not: `draft_retry=1` says the extra two commands
+cost no candidate frontend run. Exit 0 is the second half -- the source is already canonical, so the
+three degraded commands reproduced their own bytes and the rest of the file formatted around them. -/
+private def testMissSetConvergence (ctx : Ctx) : IO Unit := do
+  let relex := ctx.work / "Relex.lean"
+  writeFile relex
+      "module\n\ndef f (n : Nat) : Nat :=\n  n\n\nlocal notation x \"#\" => f x\n\n\
+theorem relexOne : 0 # = 0 := rfl\n\ntheorem relexTwo : 1 # = 1 := rfl\n\n\
+theorem relexThree : 2 # = 2 := rfl\n"
+  let result ←
+    runProc ctx.application
+        #["format", "--check", "--root", ctx.root.toString, "--no-cache", "--json", relex.toString]
+        (cwd? := some ctx.root) (env := #[("LEAN_FMT_PROFILE_PHASES", some "1")])
+  ensure (result.exitCode == 0)
+      s!"three reparse misses did not converge: {result.exitCode}\n{result.stderr}"
+  ensureContains result.stderr "cache.draft_retry=1" "miss set"
+  ensureContains result.stderr "cache.verbatim_commands=3" "miss set"
+  let report ← parseJson result.stdout "miss set"
+  ensureJsonAt report [.field "verbatimCommands"] (Lean.toJson (3 : Nat)) "miss set"
+  let failures := (jsonAt? report [.field "infrastructureFailures"]).bind (·.getArr?.toOption)
+  ensureEq "a converged file was still an infrastructure failure" 0 ((failures.map (·.size)).getD 0)
+
 end ApplicationFormatter
 
 public def main (args : List String) : IO UInt32 := do
@@ -304,5 +341,7 @@ public def main (args : List String) : IO UInt32 := do
           { name := "broken-member-publication",
             run := ApplicationFormatter.testBrokenMemberPublication ctx },
           { name := "refusal", run := ApplicationFormatter.testRefusal ctx },
-          { name := "degraded-is-clean", run := ApplicationFormatter.testDegradedIsClean ctx }]
+          { name := "degraded-is-clean", run := ApplicationFormatter.testDegradedIsClean ctx },
+          { name := "miss-set-convergence",
+            run := ApplicationFormatter.testMissSetConvergence ctx }]
       runCases "application-formatter" cases args

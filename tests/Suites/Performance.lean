@@ -210,16 +210,23 @@ private def gateNoDraftRetry (capture : String) : Bool :=
   lines.any (·.startsWith "cache.candidate_reparse=") &&
     !(lines.any (·.startsWith "cache.draft_retry="))
 
-/-- §1h″. Where the retry does fire, it stays inside its bound and every attempt it spent bought a
-degradation.
+/-- §1h″. Where the retry does fire, it stays inside its bound and every attempt it spent bought at
+least one degradation.
 
-The equality is the gate. `retries ≤ bound` alone would accept a retry that degraded nothing -- the
-loop spinning on an attribution it cannot act on -- and `verbatim ≥ 1` alone would accept a
-degradation nobody paid an attempt for, which would mean the counters had stopped describing the same
-mechanism. -/
+The inequality is the gate, in both directions and neither alone. `retries ≤ bound` by itself would
+accept a retry that degraded nothing -- the loop spinning on an attribution it cannot act on -- and
+`verbatim ≥ 1` by itself would accept a degradation nobody paid an attempt for, which would mean the
+counters had stopped describing the same mechanism.
+
+It was an *equality* until the resumed reparse landed, which was the same gate under the weaker
+mechanism: one attempt could learn about one command, so a retry that degraded two would have meant a
+miscount. An attempt now forces every command the candidate's bytes cannot reparse, so one retry
+buying three degradations is the fix working -- and it is why `verbatim ≤ retries` cannot be gated.
+The direction that still can is the one that would mean the loop stopped paying: a degradation with
+no retry behind it. -/
 private def gateRetryBounded (capture : String) (bound : Int) : Bool :=
   match counter "cache.draft_retry" capture, counter "cache.verbatim_commands" capture with
-  | some retries, some verbatim => 0 < retries && retries ≤ bound && verbatim == retries
+  | some retries, some verbatim => 0 < retries && retries ≤ bound && retries ≤ verbatim
   | _, _ => false
 
 /-- §1i. The run walked the Lake graph no more than `bound` times.
@@ -343,7 +350,9 @@ private def testGatesDiscriminate : IO Unit := do
       "rejects three retries where the bound is two"
   expect (!(gateRetryBounded "cache.draft_retry=2\ncache.verbatim_commands=1\n" 2))
       "rejects a retry that bought no degradation"
-  expect (!(gateRetryBounded "cache.draft_retry=1\ncache.verbatim_commands=2\n" 2))
+  expect (gateRetryBounded "cache.draft_retry=1\ncache.verbatim_commands=3\n" 2)
+      "accepts one retry that degraded the whole miss set at once"
+  expect (!(gateRetryBounded "cache.draft_retry=0\ncache.verbatim_commands=2\n" 2))
       "rejects a degradation no retry paid for"
   expect (!(gateRetryBounded retried 0)) "rejects any retry where the bound is zero"
   expect (!(gateRetryBounded "cache.verbatim_commands=1\n" 2))

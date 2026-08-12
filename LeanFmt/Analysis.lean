@@ -773,12 +773,22 @@ private def projectAndRender (mainModule : String) (normalized : String)
         headerOptions commands format checkCancelled forced
   return (projection, draft)
 
-/-- A candidate the reparse refused: the counter tag it is reported under, and the command whose
-bytes the refusal came from where one is known. The header and the terminal name no index -- there
-is no command to force in their place. -/
+/-- A candidate the reparse refused: the counter tag it is reported under, and every command whose
+bytes the refusal came from. The header and the terminal name no index -- there is no command to
+force in their place -- so `commands` is empty for those.
+
+Every miss rather than the first, because a file with *n* unrenderable commands would otherwise cost
+*n* candidate-frontend runs to work through, one per retry, and `maxDraftRetries` is 2:
+`Mathlib/NumberTheory/Primorial.lean` has three and exhausted the bound one command short of
+converging. The tag is the *first* miss's, so the counter a run reports does not depend on what the
+resume found afterwards. -/
 private structure ReparseMiss where
   tag : String
-  command? : Option Nat := none
+  commands : Array Nat := #[]
+
+/-- The command to blame, which is the first one that missed. -/
+private def ReparseMiss.command? (miss : ReparseMiss) : Option Nat :=
+  miss.commands[0]?
 
 /-- Parse the candidate command by command under the contexts Lean used for the original, and accept
 only if every command comes back structurally identical.
@@ -810,10 +820,22 @@ The candidate's *own* header syntax comes back with the commands, not the origin
 ignores source info, which is the point here and a trap next door: the original's header carries
 positions into the original bytes, and comment ownership and the header render both read positions.
 Handing them the original's header over the candidate's text puts two coordinate systems in one
-draft. -/
+draft.
+
+**After a miss the walk resumes, and stops being an induction.** It restarts at the next command's
+own offset in the candidate -- `resumeAt[i]`, which the caller reads off the draft's source map --
+with a fresh parser state rather than the failed command's. Nothing is carried across that boundary,
+so a command after a miss is judged under the *original* run's recorded context for its own index and
+not under whatever the candidate's broken command left behind. That is unsound as an admission and
+exactly right as a question: the caller is already refusing, and what it needs from here is the set of
+commands to emit verbatim. Sound admission is the `.ok` path, which no resume can reach -- one miss
+and the result is an error whatever follows.
+
+Where `resumeAt` has no offset for a command the walk cannot resume past it and stops there, which is
+the old behaviour. -/
 private def reparseCandidate (text : String) (sourcePath : System.FilePath)
     (headerStx : Lean.Syntax) (commands : Array LiveCommand) (terminal : LiveCommand)
-    (checkCancelled : IO Unit := pure ()) :
+    (resumeAt : Array (Option Nat) := #[]) (checkCancelled : IO Unit := pure ()) :
     IO (Except ReparseMiss (Lean.Syntax × Array LiveCommand × LiveCommand)) := do
   let input := Lean.Parser.mkInputContext text sourcePath.toString
   let (header, parserState, headerMessages) ← Lean.Parser.parseHeader input
@@ -821,23 +843,42 @@ private def reparseCandidate (text : String) (sourcePath : System.FilePath)
     return .error { tag := "header_parse" }
   unless header.raw.structEq headerStx do
     return .error { tag := "header" }
+  -- Where command `index` begins in the candidate, for a walk that has stopped trusting its state.
+  let resumeState? (index : Nat) : Option Lean.Parser.ModuleParserState :=
+    (resumeAt[index]?.bind id).map fun offset => { pos := ⟨offset⟩ }
   let mut state := parserState
   let mut reparsed := #[]
+  let mut tag? : Option String := none
+  let mut missed : Array Nat := #[]
   for h : index in [0:commands.size] do
     checkCancelled
     let command := commands[index]
     let (stx, next, messages) :=
       Lean.Parser.parseCommand input command.parse.toModuleContext state .empty
-    if messages.hasErrors || next.recovering then
-      return .error { tag := "parse", command? := some index }
-    unless stx.structEq command.stx do
-      -- A terminal here means the candidate ran out of commands early, which is a different defect
-      -- from a command that changed shape, and worth its own counter.
-      return .error
-          { tag := if Lean.Parser.isTerminalCommand stx then "short" else "structure"
-            command? := some index }
-    reparsed := reparsed.push { command with stx }
-    state := next
+    let miss? : Option String :=
+      if messages.hasErrors || next.recovering then some "parse"
+      else
+        if stx.structEq command.stx then none
+        -- A terminal here means the candidate ran out of commands early, which is a different defect
+        -- from a command that changed shape, and worth its own counter.
+        else if Lean.Parser.isTerminalCommand stx then some "short" else some "structure"
+    match miss? with
+    | some tag =>
+      if tag?.isNone then
+        tag? := some tag
+      missed := missed.push index
+      -- Resume at the next command's own bytes, or give up on the rest of the walk when the marks
+      -- cannot say where those are.
+      match resumeState? (index + 1) with
+      | some resumed =>
+        state := resumed
+      | none =>
+        break
+    | none =>
+      reparsed := reparsed.push { command with stx }
+      state := next
+  if let some tag := tag? then
+    return .error { tag, commands := missed }
   checkCancelled
   let (stx, _, messages) :=
     Lean.Parser.parseCommand input terminal.parse.toModuleContext state .empty
@@ -971,8 +1012,27 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   -- same index names the same command there. A second render that laid that command out again would
   -- both re-raise the failure the first render worked around and disagree with the first draft's
   -- bytes, failing idempotence.
-  let validateDraft (first : FormatDraft) (ownership : CommentOwnership)
-    (forced : Std.HashSet Nat) : IO (Option CanonicalLayout × Option ValidationFailure) := do
+  --
+  -- The reparse itself is the caller's, not this closure's. It answers two questions -- whether the
+  -- candidate may be admitted, and which commands to emit verbatim if not -- and only the first is
+  -- judgement. Hoisting it lets the retry loop read the second answer whole instead of through the
+  -- one offset a `ValidationFailure` can carry.
+  let reparseDraft (first : FormatDraft) :
+    IO (Except ReparseMiss (Lean.Syntax × Array LiveCommand × LiveCommand)) := do
+    if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
+      return .error { tag := "disabled" }
+    -- The draft's source map is keyed by source span and carries the header and the verbatim tail
+    -- as well as the commands, so it is not indexed by command. `buildFormatDraft` marks each
+    -- command with the span `commandUnits` gives it, which is the same `units` this run holds, so
+    -- the unit's start is the key that turns one into the other.
+    let outputStarts : Std.HashMap Nat Nat :=
+      first.sourceMap.foldl (init := {}) fun table mark =>
+        table.insert mark.source.start mark.output.start
+    reparseCandidate (LosslessSource.normalize first.text).1 sourcePath module.headerStx
+        liveCommands terminal (units.map (outputStarts[·.start]?)) checkCancelled
+  let validateDraft (first : FormatDraft) (ownership : CommentOwnership) (forced : Std.HashSet Nat)
+    (reparsed : Except ReparseMiss (Lean.Syntax × Array LiveCommand × LiveCommand)) :
+    IO (Option CanonicalLayout × Option ValidationFailure) := do
     -- The contract entries carry no ranges, so `admit` cannot name a source offset for a comment
     -- divergence; it reports the index and this maps it back through the ownership that produced
     -- the entries.
@@ -985,12 +1045,6 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
               fun index => (Comments.contractRange? ownership index).map (·.start) }
       else failure
     let candidateText := (LosslessSource.normalize first.text).1
-    let reparsed ←
-      if (← IO.getEnv "LEAN_FMT_DISABLE_CANDIDATE_REPARSE") == some "1" then
-        pure (.error { tag := "disabled" })
-      else
-        reparseCandidate candidateText sourcePath module.headerStx liveCommands terminal
-            checkCancelled
     checkCancelled
     match reparsed with
     | .ok (candidateHeader, candidateCommands, candidateTerminal) =>
@@ -1144,6 +1198,7 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     checkCancelled
     canonical? := none
     validationFailure? := none
+    let mut reparseMisses : Array Nat := #[]
     let some ownership := ownership? | throw <| IO.userError "format draft has no comment ownership"
     let drafted ←
       buildFormatDraft normalizedSource projection sourcePath input.fileMap ownership
@@ -1163,7 +1218,10 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     unless validateFormatDraft do
       break
     if let some first := firstDraft? then
-      let (admitted?, refused?) ← validateDraft first ownership forced
+      let reparsed ← reparseDraft first
+      if let .error miss := reparsed then
+        reparseMisses := miss.commands
+      let (admitted?, refused?) ← validateDraft first ownership forced reparsed
       canonical? := admitted?
       validationFailure? := refused?
     if canonical?.isSome then
@@ -1173,6 +1231,18 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
       firstFailure? := some failure
     if strictLayout || retries == maxDraftRetries then
       break
+    -- Every command the candidate's own bytes cannot reparse, not just the one the failure names.
+    -- A `ValidationFailure` carries one offset, so blaming through it forces one command per
+    -- attempt and one whole candidate-frontend run each: a file with three unrenderable commands
+    -- exhausted `maxDraftRetries` a command short of converging. The resumed reparse already knows
+    -- the whole set for the price of a parse, so force it at once. Empty when the draft reparsed
+    -- and a later gate refused, which is where the single-site rule below still decides.
+    let fresh := reparseMisses.filter (!forced.contains ·)
+    if !fresh.isEmpty then
+      forced := fresh.foldl (fun acc index => acc.insert index) forced
+      degradations := degradations.push failure
+      retries := retries + 1
+      continue
     let some offset := failure.source? | break
     let some index := commandOf? units offset | break
     -- Forcing a command a second time would render the same bytes and re-derive the same refusal,
