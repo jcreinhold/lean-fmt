@@ -367,23 +367,49 @@ private def assignWithNeighbors (bytes : ByteArray) (sites : Array Site) (commen
   | none, none => { comment, placement := .dangling, owner := .file }
 
 /-- Merge source-sorted comments with source-sorted leaves. Each leaf cursor advances once, so
-ownership is linear except for the rare closing-delimiter query for the smallest enclosing node. -/
+ownership is linear except for the rare closing-delimiter query for the smallest enclosing node.
+
+**A run is decided together, because ownership decides emission order.** `assignWithNeighbors` sees
+one comment and its two neighbouring leaves, never the other comments sharing that gap -- so for a run
+between the same pair of leaves it can hand comment 1 to the following leaf, comment 2 to a block
+inside the preceding one, and comment 3 to the following leaf again. Every emitter is then correct
+about its own comment and the file comes out with the middle one moved above the other two. Ownership
+is the only place that can see the run: the emitters are per owner by construction.
+
+The repair is monotonicity, not atomicity. Once a comment in a run is assigned to the following leaf,
+everything after it in that run goes there too -- a `.leading` placement is only ever the following
+leaf's (every branch above spells it `syntaxOwner right .leading`), so the seal is exactly "the run
+has already moved on". A run that splits the other way -- something dangling inside the previous
+command, then something leading the next one -- is already in source order and is left alone, which
+matters because that split is common and correct. Assigning a whole run to one owner would have
+changed it. -/
 private def assignAll (bytes : ByteArray) (sites leaves : Array Site) (comments : Array Comment) :
     Array Assignment :=
   Id.run do
     let mut assignments := #[]
     let mut previous : Option Site := none
     let mut leafIndex := 0
+    -- The gap these comments sit in, which is what makes them a run, and whether this run has
+    -- already handed a comment to the leaf that follows it.
+    let mut runGap? : Option Nat := none
+    let mut runMovedOn := false
     for comment in comments do
       while leafIndex < leaves.size && leaves[leafIndex]!.range.stop <= comment.range.start do
         previous := some leaves[leafIndex]!
         leafIndex := leafIndex + 1
+      if runGap? != some leafIndex then
+        runGap? := some leafIndex
+        runMovedOn := false
       let mut followingIndex := leafIndex
       while
         followingIndex < leaves.size && leaves[followingIndex]!.range.start < comment.range.stop do
         followingIndex := followingIndex + 1
-      assignments :=
-        assignments.push <| assignWithNeighbors bytes sites comment previous leaves[followingIndex]?
+      let following := leaves[followingIndex]?
+      let sealed? := if runMovedOn then following.map (syntaxOwner · .leading comment) else none
+      let assignment := sealed?.getD (assignWithNeighbors bytes sites comment previous following)
+      if assignment.placement == .leading then
+        runMovedOn := true
+      assignments := assignments.push assignment
     return assignments
 
 /-- Build ownership from the actual parsed header, commands, and optional terminal command. -/

@@ -163,6 +163,41 @@ private def testImportComments (root : System.FilePath) (application : String)
   let (_, releasedText) ← canonical released "import comments unpinned"
   ensure (releasedText == wideText) "pinned-comments = [] changed an import row"
 
+/-- A run of comments between two commands comes out in source order, whatever its members' columns.
+
+Ownership decides emission order, and it used to decide each comment alone: for `--one` at column 0,
+`--two` at column 2 and `--three` at column 0, the column rule handed the middle one to a block inside
+the *preceding* command and the outer two to the following command's leading run, so the file came
+back as `--two, --one, --three`. Every emitter was right about its own comment. Only ownership could
+see the run.
+
+Reduced from `Mathlib/Topology/UniformSpace/UniformConvergenceTopology.lean`, where a commented-out
+`local notation` written across two lines with the second indented took the whole file down through
+the comments gate. Both directions are here on purpose: the split that runs the other way -- indented
+first, flush second -- is already in source order, is common, and must still split, which is what
+rules out repairing this by giving a whole run one owner.
+
+`--check` exit 0 is the assertion: the fixtures are written in canonical layout, so a reordering
+shows up as a rewrite even when the comment contract is not consulted. -/
+private def testRunOrder (root : System.FilePath) (application : String) (work : System.FilePath) :
+    IO Unit := do
+  let body := "module\n\ndef alpha : Nat :=\n  1\n\n"
+  let tail := "\ndef beta : Nat :=\n  2\n"
+  for (label, run) in
+    [("flush then indented", "--one\n  --two\n"),
+      ("flush indented flush", "--one\n  --two\n--three\n"),
+      ("indented then flush", "  --one\n--two\n")] do
+    let fixture := work / "RunOrder.lean"
+    writeFile fixture (body ++ run ++ tail)
+    let setup ← setupFile root work fixture.toString
+    let report ← analyzeExact root application setup fixture.toString "RunOrder.lean" "4:100"
+    let (_, text) ← canonical report s!"run order: {label}"
+    -- The payloads in the order the source wrote them, and nothing between them but rows.
+    let rows := (text.splitOn "\n").filter fun row => (row.trimAscii.startsWith "--")
+    ensureEq s!"run order ({label}): a comment run left source order"
+        ((run.splitOn "\n").filter (· != "") |>.map (·.trimAscii.copy))
+        (rows.map (·.trimAscii.copy))
+
 end CommentsSuite
 
 public def main (args : List String) : IO UInt32 := do
@@ -177,6 +212,7 @@ public def main (args : List String) : IO UInt32 := do
             run := CommentsSuite.testCrlfIdentical root application work borrowedSetup },
           { name := "local-syntax", run := CommentsSuite.testLocalSyntax root application work },
           { name := "layout-widths", run := CommentsSuite.testLayoutWidths root application work },
+          { name := "run-order", run := CommentsSuite.testRunOrder root application work },
           { name := "import-comments",
             run := CommentsSuite.testImportComments root application work }]
       runCases "comments" cases args
