@@ -311,6 +311,13 @@ theorem relexThree : 2 # = 2 := rfl\n"
   ensureContains result.stderr "cache.verbatim_commands=3" "miss set"
   let report ← parseJson result.stdout "miss set"
   ensureJsonAt report [.field "verbatimCommands"] (Lean.toJson (3 : Nat)) "miss set"
+  -- One entry per counted command, which is the ledger's whole contract. A round's reparse misses
+  -- and the gate's own sites name overlapping commands, and this round's do: the ledger read four
+  -- for three commands until the set was deduplicated as it was built rather than only against the
+  -- commands already forced.
+  let degradations :=
+    (jsonAt? report [.field "files", .index 0, .field "degradations"]).bind (·.getArr?.toOption)
+  ensureEq "the ledger has one entry per verbatim command" 3 ((degradations.map (·.size)).getD 0)
   let failures := (jsonAt? report [.field "infrastructureFailures"]).bind (·.getArr?.toOption)
   ensureEq "a converged file was still an infrastructure failure" 0 ((failures.map (·.size)).getD 0)
 

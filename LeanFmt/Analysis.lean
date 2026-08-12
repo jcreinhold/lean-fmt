@@ -1304,10 +1304,19 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     -- is guarded on `forced.isEmpty`, so it is reachable on round 0 alone and a file pays at most
     -- one extra frontend however many rounds it takes. The bound exists to keep a pathological file
     -- from looping, not to ration an expensive resource.
-    let fresh :=
-      (reparseMisses ++ failure.sources.filterMap (commandOf? units ·)).filter (!forced.contains ·)
+    -- Deduplicated as the set is built, not only against the commands already forced. The two
+    -- channels overlap: a command the reparse missed is usually also a site the gate named, and
+    -- `forced` is a `HashSet` so forcing it twice is free while *recording* it twice is not -- the
+    -- ledger's contract is one entry per command `verbatimCommands` counts. Over mathlib the overlap
+    -- put 516 entries behind 457 commands, across 59 files.
+    let mut fresh : Array Nat := #[]
+    let mut widened := forced
+    for index in reparseMisses ++ failure.sources.filterMap (commandOf? units ·) do
+      unless widened.contains index do
+        fresh := fresh.push index
+        widened := widened.insert index
     if !fresh.isEmpty then
-      forced := fresh.foldl (fun acc index => acc.insert index) forced
+      forced := widened
       forcedDegradations :=
         forcedDegradations ++ fresh.map (degradationAt · failure.gate failure.detail)
       retries := retries + 1
