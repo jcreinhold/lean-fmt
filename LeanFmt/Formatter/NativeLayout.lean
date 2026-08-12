@@ -1945,6 +1945,64 @@ private partial def collectUnbreakableRuns (source : String) (stx : Lean.Syntax)
     children.foldl (init := ranges) fun ranges child => collectUnbreakableRuns source child ranges
   | _ => ranges
 
+/- Spans whose interior gaps the toolchain's printer spells with nothing, where the grammar's own
+siblings spell a space. Two upstream parsers forget the pretty-print separator; both are ordinary
+upstream bugs of the kind this module already works around, and neither gap is a layout decision
+anyone made.
+
+`optKind` (`Lean/Parser/Syntax.lean:101`) is `" (" >> nonReservedSymbol "kind" >> ":=" >> ident >> ")"`.
+The two sibling parsers spelling the same construct — `namedName` (`:66`) and `catBehavior` (`:110`) —
+both write `" := "`. So `macro_rules (kind := k)` prints as `macro_rules (kind:=k)` while
+`syntax (name := n)` keeps its spaces. `optKind` has exactly two call sites, `macro_rules` and
+`elab_rules`, so the shape is named by its parents rather than recognised by its atoms:
+`register_parser_alias` spells a `&"kind"` group too, and spells it correctly.
+
+`Syntax.paren` and its four siblings (`:37-49`) spell `many1 syntaxParser`, where the top-level
+`«syntax»` element list (`:105`) spells `many1 (ppSpace >> syntaxParser argPrec)`. So
+`syntax "a" (" with " term)? : term` keeps the outer space and loses the inner one. As with nested
+commands above, the way to find those lists is to ask the *category* rather than to name the five
+parsers: an element list is a `null` node whose children are all `stx`-category kinds. That set
+includes the top-level list, where the space is already spelled and a `.flat` asking for it again is
+what the document already holds.
+
+`pushToken` repairs neither, and that is not a defect in it: it inserts a space exactly when
+concatenation would re-lex as one token, and `kind:=k` re-lexes correctly. Nothing about these gaps is
+discretionary — the printer emits no separator at all — so this is not the adapter-side merge rule the
+directory guide warns over-fires.
+
+The correction is `unbreakableRunBoundaries` unchanged: a `.flat` at each gap *the source* spells with
+spaces, under the one-line precondition below. A list the source wrapped is left alone, and a gap the
+source left empty stays empty: `syntax "a" (" with "term)?` keeps its tight inner gap, because this
+rule only ever asks a gap to hold what the source already put there.
+
+That last guarantee is this rule's, and not a claim about the whole declaration. The *outer* element
+list is spelled with upstream's own `ppSpace`, so `syntax "a"(" b")` gains a space between `"a"` and
+`(` whatever this rule does — measured against the binary built before it. Do not read a spacing
+change in a `syntax` command as evidence about this collector without checking which list it is in. -/
+private partial def collectForgottenSpaceRuns (stxKinds : Lean.Parser.SyntaxNodeKindSet)
+    (source : String) (stx : Lean.Syntax) (ranges : Array SourceRange := #[]) : Array SourceRange :=
+  match stx with
+  | .node _ kind children =>
+    let optKind? : Option Lean.Syntax :=
+      if kind == ``Lean.Parser.Command.macro_rules || kind == ``Lean.Parser.Command.elab_rules then
+        children.find? fun child =>
+          child.isOfKind Lean.nullKind && child.getArgs.size == 5 &&
+            child.getArgs[1]?.any (·.isToken "kind")
+      else none
+    let isElementList :=
+      kind == Lean.nullKind && 2 <= children.size &&
+        children.all fun child => stxKinds.contains child.getKind
+    let elementList? : Option Lean.Syntax := if isElementList then some stx else none
+    let ranges :=
+      (#[optKind?, elementList?].filterMap id).foldl (init := ranges) fun ranges node =>
+        match sourceRange? node with
+        | some range => if (slice source range).contains '\n' then ranges else ranges.push range
+        | none => ranges
+    let children := if kind == Lean.choiceKind then children[0]?.toArray else children
+    children.foldl (init := ranges) fun ranges child =>
+      collectForgottenSpaceRuns stxKinds source child ranges
+  | _ => ranges
+
 /- The boundaries an unbreakable run asks for: one `.flat` per gap the source spells with spaces alone.
 
 A gap holding a comment is not one of them -- the comment machinery owns that gap and a `.flat` there
@@ -4542,6 +4600,8 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   let unbreakableRuns := collectUnbreakableRuns source stripped
   let categories := (Lean.Parser.parserExtension.getState (← Lean.getEnv)).categories
   let commandKinds := (categories.find? `command).map (·.kinds) |>.getD {}
+  let stxKinds := (categories.find? `stx).map (·.kinds) |>.getD {}
+  let forgottenSpaceRuns := collectForgottenSpaceRuns stxKinds source stripped
   let rootStart := ((selectedLeafRanges stripped)[0]?).map (·.start) |>.getD 0
   let ctorDocStarts := collectCtorDocStarts stripped
   let nestedCommandRanges := collectNestedCommandRanges commandKinds rootStart stripped
@@ -4686,6 +4746,7 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
           (braceLiteralRows.filter fun p => outsideExploded p.1) ++
           letFamilyAlignments ++
           unbreakableRunBoundaries source terminals unbreakableRuns ++
+          unbreakableRunBoundaries source terminals forgottenSpaceRuns ++
           ((collectStructInstEllipses stripped).filterMap fun start =>
               let broken :=
               (terminals.filter (·.range.stop <= start)).back?.any fun previous =>

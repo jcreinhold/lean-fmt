@@ -718,8 +718,9 @@ so a formats-cleanly check passes against the defect; `verbatim_commands` is the
 tells a laid-out command from a passed-through one.
 
 Absence is the pin because these counters are printed only when non-zero. That reads as a weak
-assertion on its own; `rooted-kind` above pins the same two names present, through `statFrom`, which
-throws when the line is missing. Neither case survives renaming a counter. -/
+assertion on its own, so it is paired: `application-formatter`'s `degraded-is-clean` and
+`miss-set-convergence` pin both names *present*, at `verbatim_commands=1`/`3` and `draft_retry=1`.
+Renaming a counter turns those red, so absence here cannot pass by spelling. -/
 private def testIslandComment (ctx : Ctx) : IO Unit := do
   -- The payload as measured: a first line the lexer takes as trivia, then a body Lean does keep.
   let payload := "/--\n-- Foo.Bar\n\nbaz : Nat\n-/\n"
@@ -745,6 +746,48 @@ private def testIslandComment (ctx : Ctx) : IO Unit := do
         (countExact result.stdout "baz : Nat")
     ensureEq s!"{label} degraded no command" 0 (count result.stderr "cache.verbatim_commands=")
     ensureEq s!"{label} needed no draft retry" 0 (count result.stderr "cache.draft_retry=")
+
+/-- §6d: two upstream parsers spell no pretty-print separator where the grammar's own siblings spell
+a space, so the toolchain's printer emitted none and lean-fmt published the result.
+
+`optKind` writes `":="` where `namedName` and `catBehavior` write `" := "`, so `macro_rules (kind := k)`
+came back as `macro_rules (kind:=k)`. `Syntax.paren` and its four siblings write `many1 syntaxParser`
+where the top-level `«syntax»` list writes `many1 (ppSpace >> …)`, so every *nested* element list lost
+its spaces. Both were published, not degraded: the output reparses, so every gate admitted it. On
+mathlib the second one rewrote `syntax BigOpWith := " with " atomic(binderIdent " : ")? term` into
+`" with "atomic(binderIdent" : ")?term` -- three spaces removed from a line nobody asked lean-fmt to
+touch.
+
+The third case is the rule's own limit, and it is here to keep the fix honest: the correction asks a
+gap to hold only what the source already put there, so a tight inner gap stays tight. It is not a
+claim about `syntax` commands generally -- the *outer* element list carries upstream's own `ppSpace`
+and gains a space whatever this rule does. -/
+private def testForgottenSpace (ctx : Ctx) : IO Unit := do
+  let source :=
+    "module\n\npublic import Lean\n\nopen Lean\n\npublic section\n\n" ++
+      "syntax (name := leanFmtSpaceNamed) \"leanFmtSpaceN\" : term\n\n" ++
+      "syntax \"leanFmtSpaceWide\" (\" with \" term)? : term\n\n" ++
+      "syntax \"leanFmtSpaceTight\" (\" with \"term)? : term\n\n" ++
+      "macro_rules (kind := leanFmtSpaceNamed)\n  | `(leanFmtSpaceN) => `((0 : Nat))\n"
+  let result ←
+    expectExit 0 "forgotten separators" ctx.application
+        #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean",
+          "--root", "."]
+        (input? := some source) (cwd? := some ctx.root)
+  ensureEq "the `kind :=` spaces survive" 1
+      (countExact result.stdout "macro_rules (kind := leanFmtSpaceNamed)")
+  ensureEq "a nested element list keeps the spaces the source spells" 1
+      (countExact result.stdout "syntax \"leanFmtSpaceWide\" (\" with \" term)? : term")
+  ensureEq "  ... and a gap the source left empty stays empty" 1
+      (countExact result.stdout "syntax \"leanFmtSpaceTight\" (\" with \"term)? : term")
+  -- Twice, because the correction reads the source: a rule that spelled a space the second pass then
+  -- read as source would still pass a single-pass check while drifting on every run after it.
+  let twice ←
+    expectExit 0 "forgotten separators are idempotent" ctx.application
+        #["format", "-", "--stdin-filename", "tests/fixtures/native-layout/RootedKind.lean",
+          "--root", "."]
+        (input? := some result.stdout) (cwd? := some ctx.root)
+  ensureEq "the separator correction is not idempotent" result.stdout twice.stdout
 
 /-- §6c: the two bracketed `sepByIndentSemicolon` families hug at width 100, and at width 20 -- where
 the list must break left of the column `sepByIndent`'s inner `withPosition` saved -- they admit
@@ -830,5 +873,6 @@ public def main (args : List String) : IO UInt32 := do
           { name := "bracketed-sequences", run := NativeLayout.testBracketedSequences ctx },
           { name := "mathlib-style", run := NativeLayout.testMathlibStyle ctx },
           { name := "rooted-kind", run := NativeLayout.testRootedKind ctx },
-          { name := "island-comment", run := NativeLayout.testIslandComment ctx }]
+          { name := "island-comment", run := NativeLayout.testIslandComment ctx },
+          { name := "forgotten-space", run := NativeLayout.testForgottenSpace ctx }]
       runCases "native-layout" cases args
