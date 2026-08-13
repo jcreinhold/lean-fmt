@@ -21,7 +21,7 @@ compiler that wrote them. Find your row:
 
 | lean-fmt | Lean |
 | --- | --- |
-| 0.6.0, 0.7.0 | `v4.34.0-rc1` |
+| 0.6.0 – 0.7.1 | `v4.34.0-rc1` |
 | 0.5.0 | `v4.33.0` |
 | 0.4.0, 0.4.1 | `v4.33.0-rc2` |
 | 0.2.0 – 0.3.1 | `v4.33.0-rc1` |
@@ -129,7 +129,7 @@ after that:
 
 ```lean
 require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v0.7.0"
+  "https://github.com/jcreinhold/lean-fmt" @ "v0.7.1"
 ```
 
 ```sh

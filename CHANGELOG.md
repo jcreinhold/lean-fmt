@@ -8,7 +8,7 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
-## Unreleased
+## 0.7.1 — 2026-08-13
 
 ### Fixed
 

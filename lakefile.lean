@@ -17,7 +17,7 @@ Both driver names need guillemets: `lean-fmt` is not a legal Lean identifier and
 driver by `String.toName`, so the bare spelling does not find the executable. The downstream suite's
 `lint-driver` case pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
-  version := v!"0.7.0"
+  version := v!"0.7.1"
   testDriver := "«test-suites»"
   lintDriver := "«lean-fmt»"
   lintDriverArgs := #["check"]
