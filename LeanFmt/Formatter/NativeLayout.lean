@@ -2236,8 +2236,13 @@ private def ctorDocComment? (stx : Lean.Syntax) : Option Lean.Syntax := do
 
 Lean's document is `text" where" nest-2[text"/--" line text"…-/" text"\n"] text"\n|" …`, which spells
 the boundary between the docstring and its constructor twice and dedents the docstring by one level.
-Rendered, that is a docstring at column zero followed by a blank line — and reparsed, a docstring
-that no longer sits on its constructor.
+Rendered, that is a docstring glued to the `where` above it, a blank line, then the constructor — and
+at a width narrow enough to break the docstring's own group, a continuation line at column zero.
+
+It still reparses onto the same constructor: five shapes at widths 100, 20 and 8 all round-trip
+`structEq` (2026-08-13, `docs/upstream-defects.md` §6). What changes is the docstring's text, not its
+owner. This collector is here for the layout, which is reason enough — a formatter that moves a
+docstring's indentation has changed the file.
 
 The `elided` boundary at the `|` removes the first of the two newlines, leaving the one inside the
 `"\n| "` atom, which carries the constructor's own indentation. The constraint cancels the `nest -2`

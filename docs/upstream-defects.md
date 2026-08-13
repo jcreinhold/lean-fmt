@@ -15,6 +15,12 @@ The corpus figures come from two whole-project runs on that day, both cold-cache
 `broken` 0 and `infrastructure_failures` 0 in both. Where a section says "of the 421", it is quoting
 the first run.
 
+Nine defects, in two groups. §§1–5 are refusals: the formatter throws, and what they cost is counted
+in the ledger. §§6–9 are defects `lean-fmt` already compensates for, each at the price of a mechanism
+in `LeanFmt/Formatter/NativeLayout.lean` that could be deleted if the defect were fixed upstream —
+they are here because a mechanism nobody can name the reason for is a mechanism nobody dares remove.
+§10 is the residue neither group explains.
+
 Two open items *are* filed and are deliberately absent from this file:
 [#14611](https://github.com/leanprover/lean4/issues/14611) with its PR
 [#14696](https://github.com/leanprover/lean4/pull/14696) (doubly-declared notation in binder
@@ -387,7 +393,7 @@ is true only of `sepBy` under `sepByIndent`, and an unnecessary marker is not fr
 an `optional.antiquot_scope` throws `uncaught backtrack exception` where the toolchain would have
 formatted it. `Mathlib/Tactic/Have.lean`'s three `elab_rules`, each spelling
 `` `(tactic| have $n:optBinderIdent $bs* $[: $t:term]?) ``, degraded for exactly that reason, and now
-do not. That was the one file in §6's residue whose failure was already known to be ours.
+do not. That was the one file in §10's residue whose failure was already known to be ours.
 
 Filing this would let the `sepBy` clause be deleted too. Until then the base test is the whole
 discriminator: `sepBy` is protected because a `sepBy` splice cannot be told apart from `sepByIndent`'s,
@@ -395,7 +401,169 @@ and a marker there was measured harmless.
 
 ---
 
-## 6. What is still unexplained
+## 6. `ctor` puts the newline after the docstring it should precede
+
+`ctor` (`src/Lean/Parser/Command.lean:210-212`) is
+`atomic (optional docComment >> "\n| ") >> ppGroup …`. The newline a constructor needs sits *inside*
+the `"\n| "` atom, which comes *after* `optional docComment` — so the formatter emits the docstring
+where the separator belongs, and the separator after it.
+
+### Reproduction
+
+| input | rendered at width 100 |
+| --- | --- |
+| `inductive Foo where` / `  /-- the doc -/` / `  \| mk : Foo` | `inductive Foo where/-- the doc -/`, a blank line, then `  \| mk : Foo` |
+| `inductive Bar where` / `  \| first : Bar` / `  /-- second's doc -/` / `  \| second : Bar` | `  \| first : Bar/-- second's doc -/`, a blank line, then `  \| second : Bar` |
+| `structure S where` / `  /-- the field -/` / `  fst : Nat` | unchanged — correct |
+
+The structure row is the control: this is `ctor`'s composition, not doc comments generally.
+
+At width 20 the docstring's own group also breaks, and because `categoryParser.formatter` dedents it
+one level the continuation lands at column zero:
+
+```
+inductive
+  Foo where/--
+the doc -/
+
+  | mk : Foo
+```
+
+### A claim this file does not support
+
+`LeanFmt/Formatter/AGENTS.md` and `collectCtorDocStarts`'s docstring in
+`LeanFmt/Formatter/NativeLayout.lean` both say the rendered form "reparses onto the wrong owner" /
+"no longer sits on its constructor". Measured on 2026-08-13, it does not: five shapes — one
+constructor, two constructors with the docstring on the second, two constructors each with one, an
+`inductive` with no `where`, and a `structure` — at widths 100, 20 and 8 all reparse with
+`Syntax.structEq` true against the original tree. The docstring's *content* changes (it acquires a
+newline and loses leading indentation) but its owner does not.
+
+Settled by preferring the measurement: this section states only what was observed, and the two
+records above are corrected to match. The defect is a layout defect — a docstring glued to `where`,
+a spurious blank line, a continuation at column zero — not a correctness one. It would become a
+correctness one under `--fix`-style tooling that diffs docstring text, which is why it is still worth
+filing.
+
+### What it costs us
+
+A mechanism: `ctorDocComment?` / `collectCtorDocStarts` plus a matching offside constraint
+(`LeanFmt/Formatter/NativeLayout.lean:2222-2266`), which elides the first of the two newlines and
+cancels the dedent over the docstring's range. Nothing reaches the ledger.
+
+---
+
+## 7. `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has
+
+`Init/Notation.lean:953-954`:
+
+```lean
+syntax (name := guardMsgsCmd)
+  (plainDocComment)? "#guard_msgs" (ppSpace guardMsgsSpec)? " in" ppLine command : command
+```
+
+Compare `src/Lean/Parser/Command.lean:886`, which spells
+`withOpen (withSetOption (ppDedent (" in" >> ppLine >> commandParser)))`. `categoryParser.formatter`
+(`src/Lean/PrettyPrinter/Formatter.lean:304-311`) wraps every category node in `nest format.indent`,
+so without the `ppDedent` the embedded command is indented one level.
+
+### Reproduction
+
+| input | rendered |
+| --- | --- |
+| `#guard_msgs in` / `example : True := trivial` | `#guard_msgs in` / `  example : True :=` / `    trivial` |
+| `#guard_panic in` / `example : True := trivial` | same, indented |
+| `set_option pp.all true in` / `example : True := trivial` | at column zero — correct |
+
+`guardPanicCmd` (`Init/Notation.lean:960-961`) and `infoTreesCmd` (`:968-969`) spell it the same way
+and have the same result; `set_option … in` is the control.
+
+### What it costs us
+
+Nothing in the ledger, and one mechanism: the `dedented` boundary keyed on the live `command`
+category rather than on a list of parsers that forgot
+(`LeanFmt/Formatter/NativeLayout.lean:1178-1200`; its citation of `Init/Notation.lean:938` is stale,
+the declaration is now at `:953`). A command must start at column zero — mathlib's
+`linter.style.whitespace` reports otherwise, and on `Mathlib/Tactic/Linter/ValidatePRTitle.lean` the
+indented candidate breaks the very `#guard_msgs` message that file asserts.
+
+---
+
+## 8. The category formatter's `nest` accumulates once per link of an operator chain
+
+`categoryParser.formatter` (`src/Lean/PrettyPrinter/Formatter.lean:304-311`) wraps **every** category
+node in `nest format.indent |>.fill`, a bare literal included. A chain of one infix operator parses as
+nested applications of that operator, once per link, so the wrappers stack and each link's break lands
+one level further in than the link outside it. The accumulation is unbounded, and rows eventually
+exceed the width the caller asked for.
+
+### Reproduction
+
+`example := "a0" ++ "a1" ++ … ++ "a<n-1>"`, rendered at `pretty 100`:
+
+| operands | deepest indent | widest row |
+| --- | --- | --- |
+| 4 | 2 | 30 |
+| 8 | 2 | 62 |
+| 16 | 10 | 99 |
+| 32 | 42 | 99 |
+| 64 | 106 | 114 |
+
+At 64 operands `pretty 100` returns a 114-column row. `LAY-CHAIN-COMPENSATION`
+(`LeanFmt/Formatter/NativeLayout.lean:2331-2346`) records the same growth as `2 × operands − 6`,
+reaching column 122 and rows 145 wide, from a run with wider operands — the constants depend on
+operand width, the unbounded growth does not. Re-fit before quoting either.
+
+### What it costs us
+
+A mechanism, `LAY-CHAIN-COMPENSATION`: one `nest (-format.indent)` on each operand that continues its
+parent's chain. Nothing in the document says "these operands are a chain", so `Std.Format` cannot
+recover the shape — the accumulation is in what the formatter emits, not in how the engine renders it.
+
+Fixing this upstream means changing what the generic category formatter wraps, which moves the layout
+of every construct in the language. That is a change to propose on its own evidence, not a rider on
+the others here.
+
+---
+
+## 9. Four toolchain parsers declare a node kind that names no constant
+
+`macro (name := _root_.A.B) …` written inside `namespace N` leaves the two ends of one declaration
+disagreeing about what `_root_` means. The parser *constant* is elaborated as an ordinary declaration
+name, which honours `_root_`, and is `A.B`. The node *kind* is `(← getCurrNamespace) ++ declName.getId`
+(`src/Lean/Elab/Syntax.lean:465`), which does not, and is `N._root_.A.B`. Every node that parser
+produces carries a kind naming no constant, and `formatCommand` dies looking one up.
+
+### Reproduction
+
+| input | result |
+| --- | --- |
+| `register_label_attr leanFmtProbeAttr` | THREW ``Unknown constant `Lean._root_.Lean.Parser.Command.registerLabelAttr` `` |
+| `register_simp_attr leanFmtProbeSimp` | THREW ``Unknown constant `Lean.Meta.Simp._root_.Lean.Parser.Command.registerSimpAttr` `` |
+| `register_grind_attr leanFmtProbeGrind` | THREW ``Unknown constant `Lean.Meta.Grind._root_.Lean.Parser.Command.registerGrindAttr` `` |
+
+Declared at `src/Lean/LabelAttribute.lean:84`, `src/Lean/Meta/Tactic/Simp/RegisterCommand.lean:16` and
+`src/Lean/Meta/Tactic/Grind/RegisterCommand.lean:12`. A fourth,
+`src/Lean/Meta/Sym/Simp/RegisterCommand.lean:15`, is the same shape and was not separately probed.
+
+Note for anyone fixing it: the doubled name is baked into the `ParserDescr` too, so rewriting the node
+kind to the suffix does not help — `node.formatter`'s `checkKind`
+(`src/Lean/PrettyPrinter/Formatter.lean:335-343`) then compares the descr's doubled name against the
+rewritten node and `throwBacktrack`s, turning `Unknown constant …` into `uncaught backtrack
+exception`. Both ends of the descr agree on the doubled name; only `runForNodeKind`'s `getConstInfo`
+asks for the suffix.
+
+### What it costs us
+
+Nothing now. `rootedKind?` / `formatCommandForKind`
+(`LeanFmt/Formatter/NativeLayout.lean:4550-4615`) point the *lookup* at the suffix and hand the
+formatter the tree untouched. That recovered 24 of the 457 commands a whole-project run left verbatim
+before it. mathlib declares none of these itself and uses three, in three of its 8,815 files. A rooted
+kind *nested* inside a command would still be refused; no such nesting exists in the toolchain today.
+
+---
+
+## 10. What is still unexplained
 
 Classifying every `uncaught backtrack exception` degradation by the text around the degraded command,
 one classifier run over both corpus runs:
