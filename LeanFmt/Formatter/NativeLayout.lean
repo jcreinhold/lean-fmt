@@ -1978,7 +1978,15 @@ rule only ever asks a gap to hold what the source already put there.
 That last guarantee is this rule's, and not a claim about the whole declaration. The *outer* element
 list is spelled with upstream's own `ppSpace`, so `syntax "a"(" b")` gains a space between `"a"` and
 `(` whatever this rule does — measured against the binary built before it. Do not read a spacing
-change in a `syntax` command as evidence about this collector without checking which list it is in. -/
+change in a `syntax` command as evidence about this collector without checking which list it is in.
+
+None of this is cosmetic, which is the reason it is a repair rather than a nicety. A mangled `syntax`
+or `macro_rules` command changes the grammar its own file declares, so the compiler's messages differ
+and the gate reading them degrades the command. Over mathlib at `4a9d59a1cc` on 2026-08-12 this
+collector took `verbatim_commands` from 433 to 421, and all twelve came out of the gate "the
+compiler's messages" (61 to 49), across eight files that each declare a nested element list. Nothing
+else in that run moved: `rejected` 1, `broken`/`unbuilt`/`infrastructure_failures` 0, `findings`
+3707. -/
 private partial def collectForgottenSpaceRuns (stxKinds : Lean.Parser.SyntaxNodeKindSet)
     (source : String) (stx : Lean.Syntax) (ranges : Array SourceRange := #[]) : Array SourceRange :=
   match stx with
