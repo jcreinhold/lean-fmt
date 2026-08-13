@@ -109,6 +109,34 @@ macro "seq_intro" "[" h:term,* "]" : tactic => `(tactic| ($[have := $h];*))
 def suffixSplice (xs : Array Lean.Term) : Lean.MacroM Lean.Syntax :=
   `(#[$xs,*])
 
+
+/- The other side of the splice test: a splice the toolchain formats correctly, which protection would
+*break*. `optional`, `many` and `many1` build their splice wrapper inside the parser they return, so
+the derived formatter spells the splice; only `sepByIndent`'s hand-written formatter drops it. A marker
+standing in for the `optional.antiquot_scope` below backtracks instead, which is how
+`Mathlib/Tactic/Have.lean` lost all three of its `elab_rules` to verbatim. Written on one line so the
+canonical break is the pin: a degraded command keeps the source's line. -/
+syntax "island_opt" (ppSpace ident)? : tactic
+
+def optionalSplice (x? : Option Lean.Ident) : Lean.MacroM Lean.Syntax := `(tactic| island_opt $[$x?]?)
+
+
+/- A `tok%$x` positional capture, whose slot admits no marker. `tokenWithAntiquot.formatter` hands the
+token formatter the node's last child -- the antiquotation expression -- and the kinds cannot agree
+(`Lean/PrettyPrinter/Formatter.lean:296-301`, `:160-166`). The slot wants an atom of one spelling, so
+neither an identifier marker nor an atom one stands there; the smallest enclosing node is the island
+instead. Every atom in the grammar can carry one of these, quotation or not.
+
+`tokenCaptureInSplice` is not a respelling of `tokenCapture`: `$[only%$x]?` parses as an
+`antiquot_scope` standing in the same atom slot its contents do, so escalating from the capture to the
+scope lands a marker in a token slot again and throws the same backtrack. Only answering at the splice
+skips past it. Drop this declaration and the splice clause together or not at all. -/
+def tokenCapture (tk : Lean.Syntax) : Lean.MacroM Lean.Syntax :=
+  `(tactic| with_reducible%$tk rfl)
+
+def tokenCaptureInSplice (only? : Option Lean.Syntax) : Lean.MacroM Lean.Syntax :=
+  `(tactic| simp $[only%$only?]?)
+
 structure BacktrackSent where
 
 structure BacktrackTheo where
@@ -159,6 +187,25 @@ elab "infer_probe_param" : tactic => do
     "`infer_probe_param` only solves goals of the form `optParam _ _` or `autoParam _ _`, not {tgt}"
 
 theorem formatsAroundIslandTruncation (n : Nat) : n + 0 = n := Nat.add_zero n
+
+/- The upstream defect that deletes code, and the gate that stops it reaching a file.
+
+`throwError` parses its argument as `(interpolatedStr(term) <|> term)`, and
+`interpolatedStr.formatter` (`Lean/PrettyPrinter/Formatter.lean:586-591`) walks whatever node it is
+handed rather than checking it is an interpolated string. Handed a bare term it finds no
+`interpolatedStrLit` chunk in it, emits nothing, and the argument is *gone* from the document -- no
+marker, no backtrack, no diagnostic. `throwError err` renders as `throwError`.
+
+Nothing here works around that; two always-on gates contain it. The adapter's positional terminal
+correspondence meets a terminal the document never spelled and reports `.incomplete`, which degrades
+this command to its own bytes; and `reparseCandidate` compares each command's reparse against its
+original with `structEq`, which runs even under `--no-validate`. The doubled spacing below is the pin,
+as it is for `backtrackBinder`: it survives only because the command is verbatim. A day when this line
+comes back single-spaced is a day the argument could have been dropped instead. -/
+meta def droppedTermArgument (err : String) : Lean.MetaM Unit := do
+  throwError   err
+
+theorem formatsAroundDroppedArgument (n : Nat) : n + 0 = n := Nat.add_zero n
 
 end NativeLayoutIslands
 

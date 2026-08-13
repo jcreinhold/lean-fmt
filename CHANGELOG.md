@@ -8,6 +8,23 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
+## Unreleased
+
+### Fixed
+
+- **Commands carrying a `tok%$x` positional capture format instead of degrading.** Lean's formatter
+  cannot spell one — `tokenWithAntiquot.formatter` runs the token formatter on the antiquotation
+  expression, and the mismatch escapes as `uncaught backtrack exception` — so any command containing
+  one kept its original layout. lean-fmt now renders the smallest enclosing node from its source
+  bytes and formats the rest of the command. `%$` is idiomatic in tactic frontends
+  (`with_reducible%$tk`, `using%$u`, `says%$tk`), and it is not confined to quotations:
+  `by exact%$t trivial` was enough.
+- **Commands carrying a `$[…]?` or `$x*` splice format instead of degrading.** lean-fmt protected
+  every antiquotation splice as a verbatim island, but only `sepBy`'s splices need it — `optional`,
+  `many`, and `many1` build their wrapper inside the parser they return, so Lean's formatter spells
+  them correctly, and standing a placeholder in the way is what made them fail. A command spelling
+  `$[: $t]?` no longer keeps its original layout for that reason.
+
 ## 0.6.0 — 2026-08-11
 
 ### Upgrading

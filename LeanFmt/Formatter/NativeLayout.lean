@@ -153,6 +153,7 @@ guarded `let`'s bar was reverted once for exactly that (`7e838a1`) and is joined
 `collectGuardBailouts` pairs the boundary with a flatten that leaves no soft line behind — a `flat`
 alone would not be sound there. `hard` and `elided` do not have this failure mode: neither can make a
 line longer. -/
+
 /- The layout one boundary spells between two named terminals, in three classes (the
 LAY-POSTHOC-RETIREMENT census; the per-producer table is at `CommandPlan.collect`):
 
@@ -399,17 +400,29 @@ private def antiquotationKind (categories : Lean.Parser.ParserCategories) (kind 
       | .str base "pseudo" => base
       | base => base
     categories.contains base || base.isAtomic
-  -- The splice family is protected unconditionally. `mkAntiquotSplice` builds `$[p]suffix` nodes as
-  -- `kind ++ \`antiquot_scope` and `withAntiquotSuffixSplice` builds `$x,*` nodes as
-  -- `kind ++ \`antiquot_suffix_splice` (`Lean/Parser/Basic.lean:1856-1878`), and no formatter in the
-  -- toolchain dispatches on either: `Lean/PrettyPrinter/Formatter.lean` wraps antiquotations only
-  -- through `withAntiquot.formatter`, which accepts `p.antiquot` exactly, and the parser compiler
-  -- generates no splice case. Every dispatch that reaches one falls through to `formatterForKind` and
-  -- dies as `Unknown constant sepBy.antiquot_scope` — measured on a `` `(tactic| ($[have := $h];*); …) ``
-  -- macro body. Unlike the `antiquot` case there is no declared-parser slot to leave alone, so there is
-  -- no base test: the kind alone decides.
-  | .str _ "antiquot_scope" => true
-  | .str _ "antiquot_suffix_splice" => true
+  -- The splice family, where the base names the *combinator* rather than a parser or a category.
+  -- `mkAntiquotSplice` builds `$[p]suffix` as `kind ++ \`antiquot_scope` and `withAntiquotSuffixSplice`
+  -- builds `$x,*` as `kind ++ \`antiquot_suffix_splice` (`Lean/Parser/Basic.lean:1894-1925`), and
+  -- `withAntiquotSpliceAndSuffix` has exactly three bases in the toolchain: `optional`
+  -- (`Lean/Parser/Extra.lean:41-42`), `many` (`:51-52`, `:66-67`), and `sepBy` (`:202-207`, plus
+  -- `sepByElemParser` at `Parser/Basic.lean:1935` and Lake's TOML parser).
+  --
+  -- Only `sepBy` is protected, and the reason is one hand-written formatter. `optional`, `many` and
+  -- `many1` build the splice wrapper *inside the parser they return*, so the derived formatter carries
+  -- `withAntiquot.formatter` and spells the splice itself. `sepByIndent`/`sepBy1Indent` build it the
+  -- same way but then override the derived formatter with `sepByIndent.formatter` (`Extra.lean:211-226`),
+  -- which reconstructs the parser by hand and drops the wrapper: the element formatter meets the splice
+  -- node, falls through to `formatterForKind`, and dies as `Unknown constant sepBy.antiquot_scope` —
+  -- measured on a `` `(tactic| ($[have := $h];*)) `` macro body, whose sequence is a `sepBy1Indent`.
+  --
+  -- Protecting the other bases is not free, which is why the test is not `true`. `optional.antiquot_scope`
+  -- formats correctly on its own and *backtracks* with a marker in its place: `Mathlib/Tactic/Have.lean`'s
+  -- three `elab_rules`, each spelling `` `(tactic| have $n:optBinderIdent $bs* $[: $t:term]?) ``, degraded
+  -- to verbatim for exactly that reason. A plain `sepBy` splice is the one case protected without needing
+  -- it — it is indistinguishable from `sepByIndent`'s, and a marker there was measured harmless
+  -- (`` `(#[$[$xs],*]) ``, `` `(#[$xs,*]) ``).
+  | .str base "antiquot_scope" => base == `sepBy
+  | .str base "antiquot_suffix_splice" => base == `sepBy
   | _ => false
 
 private def sourceDataKind (kind : Lean.Name) : Bool :=
@@ -434,6 +447,41 @@ is chosen at parse time, so there is no grammar here whose layout lean-fmt could
 quotation is therefore one exact island; its source bytes are its whole rendering. -/
 private def dynamicQuotationKind (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Term.dynamicQuot
+
+/- A `tok%$x` positional capture, which no formatter in the toolchain can spell. This is the third
+ordinary upstream bug the module works around, and the first whose position admits no marker at all.
+
+`tokenAntiquotFn` (`Lean/Parser/Basic.lean:1816-1824`) builds a `token_antiquot` node whose children
+are `#[<token>, "%", "$", <antiquotExpr>]`. Its formatter, `tokenWithAntiquot.formatter`
+(`Lean/PrettyPrinter/Formatter.lean:296-301`), answers `visitArgs p` — and `visitArgs`
+(`:160-166`) descends to the node's *last* child, the antiquotation expression, then runs the *token*
+formatter `p` there. The kinds cannot agree, `symbolNoAntiquot.formatter` throws backtrack, and the
+command dies as the bare string `uncaught backtrack exception`. `tokenWithAntiquot` wraps `symbol`,
+`nonReservedSymbol` and `unicodeSymbol`, so *every* atom in the grammar can carry one and the failure
+is not confined to quotations: `by exact%$t trivial` refuses on its own.
+
+Every other protection here replaces a node standing in a syntax *category* position, which accepts
+any leaf, because `categoryFormatterCore` falls through to `formatterForKind` on the marker's kind. A
+`token_antiquot` stands where an *atom* does, and `symbolNoAntiquot.formatter sym` tests
+`stx.isToken sym` — the spelling, not the leaf constructor — so neither branch of `placeholder`
+rescues it. There is no in-place marker to write: measured, an identifier marker at the
+`token_antiquot` reproduces the original backtrack byte for byte. Hence the escalation disposition,
+which `sourceDataKind` and `whitespaceEnvelope` already use: the smallest enclosing non-transparent
+node is a category position again, where a marker is admissible.
+
+The splice clause reads a splice's *immediate* contents, and it is not redundant with the first.
+`$[tok%$x]?` parses as an `antiquot_scope` standing in the very slot its contents do — `simp`'s
+`optional " only"` is an atom slot — so escalating from the capture *to* the scope lands a marker in a
+token slot again, measured as the same backtrack. Answering at the splice makes escalation skip past
+it to the node above. It also keeps this branch ahead of `antiquotationKind`, which takes a `sepBy`
+splice in place and would otherwise decide the position first. A capture deeper inside a splice fills
+a category position within it and needs nothing here.
+
+Keying on the node kind is keying on the construct, not on a shape seen to fail: `token_antiquot` has
+one producer in the toolchain and one formatter, and both are named above. -/
+private def tokenSlotCapture (stx : Lean.Syntax) : Bool :=
+  stx.isTokenAntiquot ||
+    (stx.isAntiquotSplice && (Lean.Syntax.getAntiquotSpliceContents stx).any (·.isTokenAntiquot))
 
 /- A marker stands in for protected syntax while the formatter runs, so it has to be a spelling the
 formatter cannot confuse with a real token. `command` rejects a source that already spells one rather
@@ -529,60 +577,65 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
           islands := #[{ marker, range, text := slice source range, comment := true }] }
       | none => { stx }
     else
-      if sourceDataKind kind then { stx, pendingEnvelope := true }
+      -- First of the protections, because it is the only one that asks whether this *position*
+      -- admits a marker; the four below each write one and assume it does.
+      if tokenSlotCapture stx then { stx, pendingEnvelope := true }
       else
-        if antiquotationKind categories kind then exactPlaceholder source stx info
+        if sourceDataKind kind then { stx, pendingEnvelope := true }
         else
-          if dynamicQuotationKind kind then
-            -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
-            -- for it keeps the grammar around it intact and the island as small as the defect.
-            exactPlaceholder source stx info
+          if antiquotationKind categories kind then exactPlaceholder source stx info
           else
-            if
-                kind == Lean.choiceKind &&
-                  (children.any (·.isOfKind `«term{_}») &&
-                    children.any (·.isOfKind ``Lean.Parser.Term.structInst)) then
-              -- A `{a.1.2}` brace ties between the anonymous constructor and the structure instance, and
-              -- the formatter spells only the LAST alternative of a `choice` (`Formatter.lean:217,292`,
-              -- whose own TODO admits the elaborator's answer is the one it needs). With `structInst`
-              -- last, the spelling is the structure instance's: `{ a.1 .2 }`, a space inside the numeric
-              -- projection -- which does not parse at all ("unsupported structure instance field
-              -- abbreviation, expecting identifier", `AbstractEmbedding.lean`'s diagnostics refusal).
-              -- The elaboration that accepted the file picked the other side, so there is no spelling
-              -- this formatter can produce from the node: the island spells the source's bytes, whose
-              -- reparse ties the same way the original's did.
+            if dynamicQuotationKind kind then
+              -- Protected here, not escalated: the quotation is a complete term, so a marker leaf standing in
+              -- for it keeps the grammar around it intact and the island as small as the defect.
               exactPlaceholder source stx info
             else
-              let (rewrittenChildren, islands, pending) :=
-                children.foldl (init := (#[], #[], false))
-                  fun (rewritten, islands, pending) child =>
-                  let child := protectSourceDataFrom categories source child
-                  (rewritten.push child.stx, islands ++ child.islands,
-                    pending || child.pendingEnvelope)
-              let rewritten := Lean.Syntax.node info kind rewrittenChildren
-              if pending then
-                -- Every range here is read off `stx`, the node as the source wrote it, never off `rewritten`.
-                -- A placeholder is a leaf built from its node's own `SourceInfo`, which for an interior node is
-                -- `.none`, so a subtree that already escalated contributes no position at all:
-                -- `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
-                -- `` `($(_) fun $x:ident ↦ $b) `` escalated its `basicFun` first, so the enclosing application
-                -- measured 112:120 — `$(_) fun` — while the marker it produced stood for all of 112:136. The
-                -- island was then too small to cover the terminals its own marker replaced, and the transform
-                -- refused with `exact island 112:120 cuts terminal ...`. Escalation must be able to run twice.
-                match sourceRange? stx with
-                | some range =>
-                  let pendingRanges := children.filterMap sourceRange?
-                  let strictlyEncloses :=
-                    pendingRanges.any fun child =>
-                      range.start < child.start || child.stop < range.stop
-                  let transparentEnvelope :=
-                    kind == `null || kind == Lean.choiceKind || interpolationKind kind
-                  -- `stx` and `rewritten` are both nodes, so they pick the same placeholder constructor; only
-                  -- the range differs, and the island's bytes are the original node's.
-                  if strictlyEncloses && !transparentEnvelope then exactPlaceholder source stx info
-                  else { stx := rewritten, islands, pendingEnvelope := true }
-                | none => { stx := rewritten, islands, pendingEnvelope := true }
-              else { stx := rewritten, islands }
+              if
+                  kind == Lean.choiceKind &&
+                    (children.any (·.isOfKind `«term{_}») &&
+                      children.any (·.isOfKind ``Lean.Parser.Term.structInst)) then
+                -- A `{a.1.2}` brace ties between the anonymous constructor and the structure instance, and
+                -- the formatter spells only the LAST alternative of a `choice` (`Formatter.lean:217,292`,
+                -- whose own TODO admits the elaborator's answer is the one it needs). With `structInst`
+                -- last, the spelling is the structure instance's: `{ a.1 .2 }`, a space inside the numeric
+                -- projection -- which does not parse at all ("unsupported structure instance field
+                -- abbreviation, expecting identifier", `AbstractEmbedding.lean`'s diagnostics refusal).
+                -- The elaboration that accepted the file picked the other side, so there is no spelling
+                -- this formatter can produce from the node: the island spells the source's bytes, whose
+                -- reparse ties the same way the original's did.
+                exactPlaceholder source stx info
+              else
+                let (rewrittenChildren, islands, pending) :=
+                  children.foldl (init := (#[], #[], false))
+                    fun (rewritten, islands, pending) child =>
+                    let child := protectSourceDataFrom categories source child
+                    (rewritten.push child.stx, islands ++ child.islands,
+                      pending || child.pendingEnvelope)
+                let rewritten := Lean.Syntax.node info kind rewrittenChildren
+                if pending then
+                  -- Every range here is read off `stx`, the node as the source wrote it, never off `rewritten`.
+                  -- A placeholder is a leaf built from its node's own `SourceInfo`, which for an interior node is
+                  -- `.none`, so a subtree that already escalated contributes no position at all:
+                  -- `Syntax.getRange?` on `rewritten` then stops at the last leaf the rewrite left intact.
+                  -- `` `($(_) fun $x:ident ↦ $b) `` escalated its `basicFun` first, so the enclosing application
+                  -- measured 112:120 — `$(_) fun` — while the marker it produced stood for all of 112:136. The
+                  -- island was then too small to cover the terminals its own marker replaced, and the transform
+                  -- refused with `exact island 112:120 cuts terminal ...`. Escalation must be able to run twice.
+                  match sourceRange? stx with
+                  | some range =>
+                    let pendingRanges := children.filterMap sourceRange?
+                    let strictlyEncloses :=
+                      pendingRanges.any fun child =>
+                        range.start < child.start || child.stop < range.stop
+                    let transparentEnvelope :=
+                      kind == `null || kind == Lean.choiceKind || interpolationKind kind
+                    -- `stx` and `rewritten` are both nodes, so they pick the same placeholder constructor; only
+                    -- the range differs, and the island's bytes are the original node's.
+                    if strictlyEncloses && !transparentEnvelope then
+                      exactPlaceholder source stx info
+                    else { stx := rewritten, islands, pendingEnvelope := true }
+                  | none => { stx := rewritten, islands, pendingEnvelope := true }
+                else { stx := rewritten, islands }
 
 private def protectSourceData (categories : Lean.Parser.ParserCategories) (source : String)
     (stx : Lean.Syntax) : Lean.Syntax × Array ExactIsland :=

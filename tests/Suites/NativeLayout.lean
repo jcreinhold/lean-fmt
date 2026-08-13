@@ -377,6 +377,22 @@ private def testIslands (ctx : Ctx) : IO Unit := do
   -- protection is what lets a macro body carrying them format.
   ensureEq "an antiquotation splice survives as its own bytes" 1 (count islands "($[have := $h];*)")
   ensureEq "a suffix splice survives as its own bytes" 1 (count islands "$xs,*")
+  -- The other side: `optional`'s splice formats correctly upstream, so protecting it *breaks* it.
+  -- The canonical break onto its own line is the pin -- a degraded command keeps the source's line.
+  ensureEq "a splice the toolchain can spell is formatted, not protected"
+      "  `(tactic| island_opt$[ $x?]?)"
+      (←
+        lineAfterExact islands
+            "def optionalSplice (x? : Option Lean.Ident) : Lean.MacroM Lean.Syntax :=")
+  -- A `tok%$x` capture stands where an atom does, so no marker can replace it in place; the
+  -- enclosing node is the island. Without that escalation both of these refuse their command
+  -- (`format: uncaught backtrack exception`) and it degrades to verbatim.
+  ensureEq "a token capture survives as its own bytes" 1
+      (count islands "`(tactic| with_reducible%$tk rfl)")
+  -- The splice reaches the same slot through the antiquotation branch, which would take the
+  -- `antiquot_scope` in place; this is the assertion that pins the ordering between them.
+  ensureEq "a token capture inside a splice survives as its own bytes" 1
+      (count islands "`(tactic| simp $[only%$only?]?)")
   -- A binder whose whole type applies a doubly-declared infix backtracks the upstream formatter
   -- uncaught (`format: uncaught backtrack exception`); the command degrades to its source bytes
   -- verbatim, odd spacing and all, and the command after it still formats.
@@ -395,6 +411,14 @@ not {tgt}\""
       (← lineAfterExact islands "  else throwError")
   ensureEq "the command after a truncated island still formats" "  Nat.add_zero n"
       (← lineAfterExact islands "theorem formatsAroundIslandTruncation (n : Nat) : n + 0 = n :=")
+  -- `interpolatedStr.formatter` hands a bare term to the interpolated-string walk, which spells
+  -- nothing and *deletes* the argument -- no marker and no backtrack. The terminal correspondence
+  -- catches the hole and the command degrades, so the argument stands, doubled spacing and all.
+  -- Assert the whole line: `throwError` alone is what the defect would leave behind.
+  ensureEq "an argument the document dropped is not published" 1
+      (countExact islands "  throwError   err")
+  ensureEq "the command after a dropped argument still formats" "  Nat.add_zero n"
+      (← lineAfterExact islands "theorem formatsAroundDroppedArgument (n : Nat) : n + 0 = n :=")
 
 /-- §6: offside carriers compose — `sepByIndent` covers record fields and tactic/conv sequences;
 `do`, `match`, and equation alternatives have no algebra carrier at all. -/

@@ -44,7 +44,14 @@ ninth and it goes in this list.
 - Ordinary upstream bugs, each repaired against the mechanism rather than the parser: `def ctor` puts the newline inside
   the `"\n| "` atom *after* `optional docComment`, so a constructor docstring renders as `where/-- doc -/` and reparses
   onto the wrong owner; `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
-  as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has.
+  as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has;
+  `tokenWithAntiquot.formatter` answers a `tok%$x` capture with `visitArgs`, which runs the *token* formatter on the
+  node's last child — the antiquotation expression — so every atom in the grammar can carry a backtrack, quotation or
+  not. That last one is the only repair whose position admits no marker. Every other protection replaces a node in a
+  syntax *category* position, which accepts any leaf; a `token_antiquot` stands where an atom of one spelling does, so
+  an in-place marker reproduces the original failure byte for byte and protection escalates to the enclosing node
+  instead. Ask which kind of slot you are in before adding a protection — the four older ones assume a category slot
+  without saying so.
 
 Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when concatenation would re-lex
 as one token, using the real tokenizer; an adapter-side merge rule over-fires. Read `format.indent` through
