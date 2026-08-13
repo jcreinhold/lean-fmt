@@ -15,11 +15,15 @@ The corpus figures come from two whole-project runs on that day, both cold-cache
 `broken` 0 and `infrastructure_failures` 0 in both. Where a section says "of the 421", it is quoting
 the first run.
 
-Nine defects, in two groups. §§1–5 are refusals: the formatter throws, and what they cost is counted
-in the ledger. §§6–9 are defects `lean-fmt` already compensates for, each at the price of a mechanism
-in `LeanFmt/Formatter/NativeLayout.lean` that could be deleted if the defect were fixed upstream —
-they are here because a mechanism nobody can name the reason for is a mechanism nobody dares remove.
-§10 is the residue neither group explains.
+Eleven defects, in two groups. §§1–5 are refusals: the formatter throws, and what they cost is
+counted in the ledger. §§6–11 are defects `lean-fmt` already compensates for, each at the price of a
+mechanism that could be deleted if the defect were fixed upstream — they are here because a mechanism
+nobody can name the reason for is a mechanism nobody dares remove. §12 is the residue neither group
+explains.
+
+§§10 and 11 are the two that are not pretty-printer defects. Both are in the parser, both are about
+leaves whose source positions are wrong or absent rather than about anything being formatted, and
+both carry their own reproduction rather than using the harness below.
 
 Two open items *are* filed and are deliberately absent from this file:
 [#14611](https://github.com/leanprover/lean4/issues/14611) with its PR
@@ -393,7 +397,7 @@ is true only of `sepBy` under `sepByIndent`, and an unnecessary marker is not fr
 an `optional.antiquot_scope` throws `uncaught backtrack exception` where the toolchain would have
 formatted it. `Mathlib/Tactic/Have.lean`'s three `elab_rules`, each spelling
 `` `(tactic| have $n:optBinderIdent $bs* $[: $t:term]?) ``, degraded for exactly that reason, and now
-do not. That was the one file in §10's residue whose failure was already known to be ours.
+do not. That was the one file in §12's residue whose failure was already known to be ours.
 
 Filing this would let the `sepBy` clause be deleted too. Until then the base test is the whole
 discriminator: `sepBy` is protected because a `sepBy` splice cannot be told apart from `sepByIndent`'s,
@@ -563,7 +567,197 @@ kind *nested* inside a command would still be refused; no such nesting exists in
 
 ---
 
-## 10. What is still unexplained
+## 10. A Verso heading spells three leaves with no source position
+
+Verso's concrete syntax is not Lean's, so its parser builds document nodes out of atoms that appear
+nowhere in the source: a paragraph is `para{ … }`, a heading is `header( level ) { … }`. Those atoms
+still get *positions* — zero-width where they have to be — which is what lets a consumer that walks
+positions cover a construct spelled by invented tokens. `fakeAtomHere`
+(`src/Lean/DocString/Parser.lean:226-227`) is the combinator for that, and every block parser uses it
+throughout: `para{`/`}` (`:1162-1164`), `ul{`/`}` (`:1136-1138`), `dl{`/`}` (`:1154-1156`), and
+`ol(`/`)`/`{`/`}` (`:1143-1148`).
+
+`header` (`:1167-1184`) is the exception. It positions `header(` from the `#` run it consumed and
+closes with `fakeAtomHere "}"`, but spells `)` and `{` with the bare `fakeAtom` (`:1181-1182`), whose
+`info` defaults to `SourceInfo.none` (`:215`), and pushes the level as a bare
+`Syntax.mkNumLit` (`:1180`), which carries no position either. `ol(`, which has the same four-atom
+shape and is fourteen lines above, gets all four right.
+
+### Reproduction
+
+Not the `tryFmt` harness above — nothing is formatted here. Parse a command and print each leaf's
+position:
+
+```lean
+import Lean
+open Lean Elab Parser
+
+partial def leaves : Syntax → Array (String × Option Nat × Option Nat)
+  | .node _ _ args => args.flatMap leaves
+  | .atom info v =>
+    #[(v.quote, info.getPos? (canonicalOnly := false) |>.map (·.byteIdx),
+        info.getTailPos? (canonicalOnly := false) |>.map (·.byteIdx))]
+  | .ident info r .. =>
+    #[(toString r, info.getPos? (canonicalOnly := false) |>.map (·.byteIdx),
+        info.getTailPos? (canonicalOnly := false) |>.map (·.byteIdx))]
+  | .missing => #[]
+
+unsafe def main : IO Unit := do
+  initSearchPath (← findSysroot)
+  for src in ["set_option doc.verso true in\n/-! Hi -/\n",
+              "set_option doc.verso true in\n/-! # Hi -/\n"] do
+    IO.println s!"----- {src.quote}"
+    let ictx := Parser.mkInputContext src "<probe>"
+    let (hdr, pstate, msgs) ← Parser.parseHeader ictx
+    let (env, msgs) ← processHeader hdr {} msgs ictx
+    let s ← IO.processCommands ictx pstate (Command.mkState env msgs {})
+    for t in s.commands do
+      for (v, p, q) in leaves t do
+        IO.println s!"  {v}  pos={p}  tail={q}"
+```
+
+The two documents differ only in the `#`. Leaves of the module docstring alone — the paragraph, whose
+every atom is positioned:
+
+| leaf | `/-!` | `para{` | `"Hi "` | `}` | `-/` |
+| --- | --- | --- | --- | --- | --- |
+| pos–tail | 29–32 | 33–33 | 33–36 | 36–36 | 36–38 |
+
+and the heading, whose middle three are not:
+
+| leaf | `/-!` | `header(` | `0` | `)` | `{` | `"Hi "` | `}` | `-/` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| pos–tail | 29–32 | 33–34 | **none** | **none** | **none** | 35–38 | 38–38 | 38–40 |
+
+Note the second consequence, one line down from the first: byte 34 — the space between `#` and the
+heading text — belongs to no leaf's trivia either, because `header(` ends at 34 and `"Hi "` begins
+its leading run at 35. `ol(`'s spelling would have avoided both.
+
+Two more bare `fakeAtom` calls are the same shape and were **not** probed: `descItem`'s `=>`
+(`:1114`) and the directive opener's `"\n"` (`:1252`). Expect description lists and directives to
+carry position-less leaves too.
+
+### What it costs us
+
+Nothing now, and it cost the whole file before. `LosslessSource`'s tiling clause required every leaf
+to carry an original position, so any file with a Verso heading was refused outright — `rejected`,
+exit 1, nothing formatted. `MathlibTest/Linter/Header/Verso.lean` was the one file in mathlib4's
+8,862 that `lean-fmt` could not format at all.
+
+`LeafInfo.absent`, `Token.positioned` and the three walks that consult it
+(`LeanFmt/LosslessSource.lean`, `LeanFmt/Suppression.lean`) are what a fix upstream would let us
+delete. A leaf that spells no bytes takes no part in a tiling over bytes; that is a true statement
+about any parser, so the mechanism is defensible on its own terms and is not merely a workaround. The
+part that *is* a workaround is `leadingStart` having to skip absent predecessors to recover byte 34 —
+and that repair already existed, for §11.
+
+---
+
+## 11. `hygieneInfo` strands the whitespace it steals when its node is discarded
+
+`hygieneInfoFn` (`src/Lean/Parser/Basic.lean:1335-1357`) places its node immediately after the
+preceding token and moves that token's trailing whitespace onto itself: it rewrites the leaf below it
+on the stack to carry an *empty* trailing substring and keeps the real one for the node it builds
+(`:1347-1353`). The comment there says why — so that combinators like `ws` are unaffected by a
+neighbouring `hygieneInfo`.
+
+The rewrite outlives the node. `ParserState.restore` (`src/Lean/Parser/Types.lean:351-352`) shrinks
+the stack and resets the position; the rewritten leaf sits *below* the shrink point, so its emptied
+trailing survives the rewind. When the attempt that ran `hygieneInfoFn` is abandoned, the whitespace
+it moved belongs to neither leaf, and the file is no longer a linear cover of its own bytes.
+
+Writing an antiquotation is enough to abandon it. Mathlib reaches this through `optBinderIdent`,
+which is how `Mathlib/Tactic/Have.lean` and `Mathlib/Tactic/Replace.lean` hit it, but that parser's
+own `<|>` is not the cause: a lone `hygieneInfo` behind an antiquotation strands the byte just the
+same.
+
+### Reproduction
+
+Not the `tryFmt` harness above — nothing is formatted here. Parse a term and check that the leaves
+cover it:
+
+```lean
+import Lean
+open Lean Elab Parser
+
+def optBinderIdent : Parser := leading_parser
+  (ppSpace >> Term.binderIdent) <|> withResetCache hygieneInfo
+
+syntax (name := strandedHave) "stranded_have" optBinderIdent : tactic
+
+def onlyHygiene : Parser := leading_parser withResetCache hygieneInfo
+
+syntax (name := onlyHave) "only_have" onlyHygiene : tactic
+
+def noHygiene : Parser := leading_parser ppSpace >> Term.binderIdent
+
+syntax (name := plainHave) "plain_have" noHygiene : tactic
+
+partial def spans : Syntax → Array (String × Nat × Nat × Nat)
+  | .node _ _ args => args.flatMap spans
+  | .atom (.original l p t _) v =>
+    #[(v.quote, l.startPos.byteIdx, p.byteIdx, t.stopPos.byteIdx)]
+  | .ident (.original l p t _) r .. =>
+    #[(toString r, l.startPos.byteIdx, p.byteIdx, t.stopPos.byteIdx)]
+  | _ => #[]
+
+def report (s : String) : CoreM Unit := do
+  match runParserCategory (← getEnv) `term s with
+  | .error message => IO.println s!"parse error: {message}"
+  | .ok stx =>
+    let mut cursor := 0
+    for (v, leadStart, pos, trailStop) in spans stx do
+      if leadStart > cursor then
+        IO.println s!"  HOLE {cursor}-{leadStart}: \
+          {(String.fromUTF8? (s.toUTF8.extract cursor leadStart)).getD "?" |>.quote} \
+          before {v} at {pos}"
+      cursor := max cursor trailStop
+    IO.println s!"  covered to {cursor} of {s.utf8ByteSize}"
+
+#eval show CoreM Unit from do
+  report "`(tactic| stranded_have $n:optBinderIdent)"
+  report "`(tactic| stranded_have h)"
+  report "`(tactic| only_have $n:onlyHygiene)"
+  report "`(tactic| only_have)"
+  report "`(tactic| plain_have $n:noHygiene)"
+```
+
+| parsed term | result |
+| --- | --- |
+| `` `(tactic\| stranded_have $n:optBinderIdent) `` | HOLE 23-24: `" "` before `"$"` |
+| `` `(tactic\| stranded_have h) `` | covered to 26 of 26 |
+| `` `(tactic\| only_have $n:onlyHygiene) `` | HOLE 19-20: `" "` before `"$"` |
+| `` `(tactic\| only_have) `` | covered to 20 of 20 |
+| `` `(tactic\| plain_have $n:noHygiene) `` | covered to 34 of 34 |
+
+Rows three and four are the pair that isolates it: the same parser, with no alternative anyone wrote,
+strands a byte when its node is discarded and none when the node is kept. Row five is the control —
+the identical shape with no `hygieneInfo` in it covers its source.
+
+**A correction this file is recording.** `LeanFmt/LosslessSource.lean` and
+`tests/fixtures/check/StrandedTrivia.lean` both said a `takeLongest` discarding the hygieneInfo node
+was what did it. Row three refutes that: `onlyHygiene` has one branch and strands the byte anyway.
+What the combinator is that abandons the attempt behind an antiquotation was not pinned here — only
+that discarding is what matters and that a second user-written branch is not needed for it. Both
+records now say that instead.
+
+### What it costs us
+
+Nothing now, and it cost eight mathlib files before. `leadingStart`
+(`LeanFmt/LosslessSource.lean`) derives a leading run's content from contiguity — from the previous
+positioned leaf's trailing stop — rather than from the `leading` substring the parser recorded, which
+closes the hole. `Token.leading`'s contract already said contiguity determines where a leading run
+begins, so this makes the contract true rather than merely intended, and it is the mechanism §10 then
+had to teach about leaves that spell nothing.
+
+`tests/fixtures/check/StrandedTrivia.lean` reduces it to a file, and the `lossless` suite's
+`stranded-trivia` case asserts both halves: the projection covers the byte, and the independent
+oracle — which re-tiles the parser's attribution verbatim — still reports it missing. That
+disagreement is the defect, stated from both sides.
+
+---
+
+## 12. What is still unexplained
 
 Classifying every `uncaught backtrack exception` degradation by the text around the degraded command,
 one classifier run over both corpus runs:

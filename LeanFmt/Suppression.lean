@@ -299,11 +299,15 @@ private def bodyComments (src : LosslessSource) : Array (TriviaKind × SourceRan
     let mut result := #[]
     let mut cursor := src.headerStop
     for token in src.tokens do
-      let (leading, _) := scan token.leading cursor
-      result := result ++ leading
-      let (trailing, trailingStop) := scan token.trailing token.stop
-      result := result ++ trailing
-      cursor := trailingStop
+      -- A leaf the parser gave no position owns no trivia and stops at zero. Letting it advance the
+      -- cursor would send the next leaf's leading scan back to the start of the file, and every
+      -- comment between them would be reported at a range that spans most of the module.
+      if token.positioned then
+        let (leading, _) := scan token.leading cursor
+        result := result ++ leading
+        let (trailing, trailingStop) := scan token.trailing token.stop
+        result := result ++ trailing
+        cursor := trailingStop
     return result
 
 /-- Parse every directive comment in a module into `SuppressionFacts`.

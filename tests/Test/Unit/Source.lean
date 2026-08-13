@@ -107,6 +107,25 @@ private def testLosslessSource : IO Unit := do
       { source with nodes := source.nodes.set! 0 { source.nodes[0]! with parent := some 9 } }
   rejects "a fabricated token position"
       { source with tokens := source.tokens.set! 0 { source.tokens[0]! with info := .synthetic } }
+  -- An absent leaf is the one non-`original` leaf a projection may hold: the parser recorded no
+  -- position, so it spells no bytes and the tiling steps over it. Verso headings are three of them
+  -- deep, and refusing them refused the file. What separates one from the fabrication above is that
+  -- it claims nothing -- so a projection that holds one claiming a span is still a lie.
+  let absentLeaf : Token :=
+    { node := source.tokens[0]!.node, start := 0, stop := 0, info := .absent }
+  ensure ({ source with tokens := source.tokens.insertIdx! 1 absentLeaf }).structurallyValid
+      "a leaf the parser gave no position was rejected"
+  rejects "an absent leaf claiming a span"
+      { source with
+        tokens :=
+          source.tokens.insertIdx! 1
+            { absentLeaf with
+              start := 4, stop := 6 } }
+  rejects "an absent leaf owning trivia"
+      { source with
+        tokens :=
+          source.tokens.insertIdx! 1
+            { absentLeaf with trailing := #[{ kind := .whitespace, stop := 5 }] } }
   let decoded : Except String LosslessSource := Lean.fromJson? (Lean.toJson source)
   match decoded with
   | .ok actual =>

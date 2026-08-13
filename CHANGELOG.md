@@ -8,6 +8,18 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
+## Unreleased
+
+### Fixed
+
+- **A file containing a Verso heading formats instead of being refused whole.** Under `set_option
+  doc.verso true`, a `#` heading parses to three leaves the parser gives no source position at all,
+  and lean-fmt required every leaf to carry one — so the file was `rejected`, exit 1, and nothing in
+  it was formatted. A leaf that spells no bytes cannot break the byte-for-byte cover that refusal
+  protects, so those leaves are now checked for claiming nothing and then stepped over.
+  `MathlibTest/Linter/Header/Verso.lean` was the one file in mathlib4's 8,862 that lean-fmt could not
+  format at all; there are now none.
+
 ## 0.7.0 — 2026-08-13
 
 ### Upgrading

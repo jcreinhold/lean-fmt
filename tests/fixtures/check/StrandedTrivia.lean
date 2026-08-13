@@ -6,9 +6,11 @@ public meta import Lean.Elab.Tactic.Basic
 A file whose parser leaves a byte on no leaf at all.
 
 `hygieneInfo` (`Lean/Parser/Basic.lean:1335-1357`) rewrites an already-pushed leaf's tail info to
-steal that leaf's trailing whitespace. When the antiquotation branch then wins `takeLongest`, the
-hygieneInfo node is discarded -- but `ParserState.restore` rewinds the stack and the position
-without undoing the write, so the stolen space belongs to neither leaf.
+steal that leaf's trailing whitespace. The rewritten leaf sits below the shrink point, so when the
+attempt that ran it is abandoned `ParserState.restore` rewinds the stack and the position without
+undoing the write, and the stolen space belongs to neither leaf. Writing an antiquotation is what
+abandons the attempt; the `<|>` below is not the cause, and a lone `hygieneInfo` behind one strands
+the byte alike (`docs/upstream-defects.md` §11).
 
 Below, the space between `stranded_have` and `$n` in the quotation is that byte. The lossless
 projection used to refuse the whole file for it ("leading trivia does not tile N-N+1"), which is

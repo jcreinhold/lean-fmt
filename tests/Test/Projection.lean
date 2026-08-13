@@ -125,9 +125,10 @@ private partial def Walk.subtree (walk : Walk) (index : Nat) : IO (Nat × Array 
     | .original leadingStart trailingStop =>
       return (index + 1, #[(leadingStart, trailingStop)])
     | .none =>
-      fail
-          s!"entry {index} is a none leaf, so its position is fabricated rather \
-        than a projection of the source"
+      -- The parser recorded no position for this leaf, so it owns no bytes and contributes no span.
+      -- Verso spells a heading with three of them -- the level literal, `)` and `{` -- and a leaf
+      -- that spells nothing cannot make the spans it does not appear in stop tiling the source.
+      return (index + 1, #[])
     | .synthetic =>
       fail
           s!"entry {index} is a synthetic leaf, so its position is fabricated \

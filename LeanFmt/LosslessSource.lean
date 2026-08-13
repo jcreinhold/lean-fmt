@@ -51,12 +51,22 @@ structure Trivia where
   stop : Nat
   deriving Inhabited, BEq, DecidableEq, Repr
 
-/-- How the parser recorded a leaf. Parsed command syntax is `original` throughout; the other two
-are carried so a later producer cannot pass off fabricated positions as real ones. -/
+/-- How the parser recorded a leaf.
+
+`original` is a leaf that spells its own source bytes, and almost every leaf of parsed command
+syntax is one. `synthetic` and `missing` are carried so a later producer cannot pass off fabricated
+positions as real ones: both claim a span, and neither earned it.
+
+`absent` is the fourth answer and the only other one a projection can hold. The parser recorded no
+position at all, so the leaf spells *no* bytes and claims none — it cannot break a tiling it takes
+no part in. A Verso heading is where this arises on ordinary source: `Doc.Syntax.header` is built
+from six atoms, of which `header(` and `}` carry the positions of the `#` and the heading's end,
+while the level literal, `)` and `{` carry nothing, there being no source token for the level. -/
 inductive LeafInfo where
   | original
   | synthetic
   | missing
+  | absent
   deriving Inhabited, BEq, DecidableEq, Repr, Lean.ToJson, Lean.FromJson
 
 /-- A parser leaf together with the trivia the parser attached to it.
@@ -72,6 +82,14 @@ structure Token where
   trailing : Array Trivia := #[]
   info : LeafInfo := .original
   deriving Inhabited, BEq, Repr
+
+/-- Whether this leaf spells source bytes.
+
+Every walk that advances a cursor through the file — the tiling check, the trivia scan the
+suppression directives are read from — must step over the leaves that do not, or an absent leaf's
+zero stop sends the cursor back to the start of the file. -/
+def Token.positioned (token : Token) : Bool :=
+  token.info != .absent
 
 /-- Where this token's trailing trivia ends, i.e. where the next token's leading trivia begins. -/
 def Token.trailingStop (token : Token) : Nat :=
@@ -111,11 +129,13 @@ private def LeafInfo.toIndex : LeafInfo → Nat
   | .original => 0
   | .synthetic => 1
   | .missing => 2
+  | .absent => 3
 
 private def LeafInfo.ofIndex? : Nat → Option LeafInfo
   | 0 => some .original
   | 1 => some .synthetic
   | 2 => some .missing
+  | 3 => some .absent
   | _ => none
 
 private def fields (json : Lean.Json) (size : Nat) : Except String (Array Lean.Json) := do
@@ -288,16 +308,26 @@ private def leafSpan (info : Lean.SourceInfo) : Option (String.Pos.Raw × String
 The parser spells a leading substring empty at the token's own start (`Parser/Basic.lean:594`), so
 the bytes between two tokens normally ride on the previous token's *trailing* run and `recorded` is
 already the answer. `hygieneInfoFn` (`Parser/Basic.lean:1335-1357`) breaks that: it rewrites an
-already-pushed leaf's tail info to steal that leaf's trailing whitespace, and a `takeLongest` that
-then discards the hygieneInfo node rewinds the stack and the position without undoing the write. The
-stolen bytes end up on no leaf at all, and a file the projection could represent perfectly well is
-refused instead. Mathlib's `optBinderIdent` is built on that parser, so `` `(tactic| have $n:…) ``
-is enough to hit it.
+already-pushed leaf's tail info to steal that leaf's trailing whitespace, and the rewritten leaf sits
+below the shrink point, so `ParserState.restore` rewinds the stack and the position without undoing
+the write. Whenever the attempt that ran it is abandoned the stolen bytes end up on no leaf at all,
+and a file the projection could represent perfectly well is refused instead. Mathlib's
+`optBinderIdent` is built on that parser, so `` `(tactic| have $n:…) `` is enough to hit it.
+
+Writing an antiquotation is what abandons the attempt. That parser's own `<|>` is not the cause: a
+lone `hygieneInfo` behind an antiquotation strands the byte alike, and the same parser strands none
+when its node is kept (measured 2026-08-13, `docs/upstream-defects.md` §11). This docstring said
+`takeLongest` before that was checked.
 
 `Token.leading`'s contract already says contiguity determines where a leading run begins; deriving
 the run's content the same way is what makes the contract true rather than merely intended. The
 guard keeps this a no-op whenever the parser is well behaved -- then the cursor *is* the token's own
-start -- and refuses to trust a predecessor whose own positions the projection will reject anyway. -/
+start -- and refuses to trust a predecessor whose own positions the projection will reject anyway.
+
+The predecessor is the last leaf that *spells bytes*, not the last leaf pushed. An absent leaf
+stops at zero, so taking it as the predecessor fails the guard and leaves the recovery undone: a
+Verso heading is three absent leaves deep, and the space between `#` and the heading text ends up
+on no leaf at all. -/
 private def leadingStart (previous? : Option Token) (recorded : String.Pos.Raw) : String.Pos.Raw :=
   match previous? with
   | some previous =>
@@ -305,6 +335,9 @@ private def leadingStart (previous? : Option Token) (recorded : String.Pos.Raw) 
       ⟨previous.trailingStop⟩
     else recorded
   | none => recorded
+
+private def lastPositioned? (tokens : Array Token) : Option Token :=
+  tokens.findSomeRev? fun token => if token.positioned then some token else none
 
 /- Walk one command in source order, pushing nodes before their children so a child can name its
 parent, then widening each node to the hull of the leaves beneath it. -/
@@ -340,13 +373,21 @@ private partial def collect (source : String) (parent : Option Nat) (stx : Lean.
     | .original leading pos trailing endPos =>
       let token : Token :=
         { node
-          leading := scanTrivia source (leadingStart build.tokens.back? leading.startPos) pos
+          leading :=
+            scanTrivia source (leadingStart (lastPositioned? build.tokens) leading.startPos) pos
           start := pos.byteIdx
           stop := endPos.byteIdx
           trailing := scanTrivia source endPos trailing.stopPos
           info := .original }
       (some { start := pos.byteIdx, stop := endPos.byteIdx },
         { build with tokens := build.tokens.push token })
+    | .none =>
+      -- A leaf the parser gave no position spells nothing, so it contributes no span. Reporting
+      -- `{0, 0}` instead would be a lie `mergeSpan`'s `min` propagates: every ancestor hull up to
+      -- the command root would start at byte zero, and `Rules` reads those hulls for a finding's
+      -- coordinates.
+      let token : Token := { node, start := 0, stop := 0, info := .absent }
+      (none, { build with tokens := build.tokens.push token })
     | _ =>
       let (start, stop) :=
         match leafSpan info with
@@ -430,7 +471,9 @@ private def triviaTiles (runs : Array Trivia) (start stop : Nat) : Bool :=
 
 The tiling clause carries the weight: token spans and their trivia must cover `[headerStop,
 terminalStop)` once each, contiguously, with no gap and no overlap. That invariant is what makes
-this projection lossless rather than merely plausible.
+this projection lossless rather than merely plausible. It quantifies over the leaves that spell
+bytes, which is the whole of the source and no less of it — an absent leaf is checked for claiming
+nothing and then stepped over.
 
 Naming the broken clause is worth its cost at the call site that rejects a file: a bare `false`
 sent one real defect — a Verso module docstring — to a stack sampler before anyone could see which
@@ -453,7 +496,15 @@ def validationError? (source : LosslessSource) : Option String :=
         return some s!"node range {node.range.start}-{node.range.stop} is not within the source"
     let mut cursor := source.headerStop
     for token in source.tokens do
-      -- A projection is only lossless if the parser recorded real positions for every leaf.
+      -- A leaf that spells no bytes takes no part in the tiling, so it cannot break it. What it
+      -- must not do is claim a span it never earned, which is the whole of `.synthetic`'s offence.
+      unless token.positioned do
+        unless
+          token.start == 0 && token.stop == 0 && token.leading.isEmpty && token.trailing.isEmpty do
+          return some s!"the leaf at {token.start} has no position but claims bytes"
+        continue
+      -- A projection is only lossless if the parser recorded real positions for every leaf that
+      -- does spell bytes.
       unless token.info == .original do
         return some s!"the leaf at {token.start} carries no original position"
       unless token.node < source.nodes.size do

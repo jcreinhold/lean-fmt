@@ -87,6 +87,10 @@ private def testExotic (ctx : Ctx) : IO Unit := do
         "module\n\ndef beforeComments : Nat := 1\n\n-- after the last command\n/- and a block -/\n"
   -- Multi-byte UTF-8 must be counted in bytes, not codepoints, everywhere.
   discard <| exotic ctx "unicode" "module\n\ndef «π ≤ τ» : String := \"λ → ∀ 🎉\"\n-- ∀ε>0 ∃δ>0\n"
+  -- A Verso *paragraph* opens with a zero-width `para{` that carries a real position, so a document
+  -- spelled entirely by invented atoms still tiles. Headings are the shape that does not, and they
+  -- have their own case below.
+  discard <| exotic ctx "verso" "module\n\nset_option doc.verso true in\n/-! Body text. -/\n"
   -- A `choice` node holds several parses of one byte range; only one may spell those bytes.
   let choiceEnvelope ←
     exotic ctx "choice"
@@ -338,6 +342,36 @@ private def testStrandedTrivia (ctx : Ctx) : IO Unit := do
   ensureContains message "hole of 1 byte(s)"
       "the parser no longer strands a byte here; this case is vacuous"
 
+/-- The second shape where the two records disagree, and the reason the first one's repair had to
+learn about leaves that spell nothing.
+
+A Verso heading parses to `Doc.Syntax.header`, six atoms of which three — the level literal, `)` and
+`{` — carry no position, there being no source token for a heading's level. They own no bytes, so
+they cannot break a tiling they take no part in; requiring every leaf to be positioned refused the
+file anyway, and `MathlibTest/Linter/Header/Verso.lean` was the one file in mathlib4 that lean-fmt
+could not format at all.
+
+The disagreement is the same one `testStrandedTrivia` records, reached a different way. Those three
+leaves stop at zero, so the leading-run recovery took one of them for the predecessor, failed its
+own guard, and left the space after the `#` on no leaf — the oracle still reports that byte, because
+the parser's attribution is what it re-tiles and the parser really did strand it.
+
+Assert both halves, for the same reason as above: if a future parser positions those leaves, the
+oracle's rejection is the only thing that would say this case has gone vacuous. -/
+private def testVersoHeading (ctx : Ctx) : IO Unit := do
+  let fixture := "tests/fixtures/check/VersoHeading.lean"
+  let source := ctx.root / fixture
+  let envelope ←
+    project ctx ctx.borrowedSetup.toString source.toString "VersoHeading" "verso-heading"
+  ensure (((jsonAt? envelope [.field "diagnostics"]).bind (·.getArr?.toOption)).getD #[]).isEmpty
+      "the Verso-heading fixture did not analyze"
+  let some artifact := jsonAt? envelope [.field "artifact"]
+    | fail "the Verso-heading fixture produced no artifact; the projection refused it again"
+  let message ←
+    expectRejection "Verso heading" <| LeanFmt.Test.Projection.checkArtifact artifact source
+  ensureContains message "hole of 1 byte(s)"
+      "the parser no longer strands the space after `#`; this case is vacuous"
+
 /-- The mutation battery over the unicode base and the choice fixture. -/
 private def testMutations (ctx : Ctx) : IO Unit := do
   let unicodeSource := ctx.work / "unicode.lean"
@@ -530,5 +564,6 @@ public def main (args : List String) : IO UInt32 := do
         corpus ++
           #[{ name := "exotic", run := Lossless.testExotic ctx },
             { name := "stranded-trivia", run := Lossless.testStrandedTrivia ctx },
+            { name := "verso-heading", run := Lossless.testVersoHeading ctx },
             { name := "mutations", run := Lossless.testMutations ctx }]
       runCases "lossless" cases args
