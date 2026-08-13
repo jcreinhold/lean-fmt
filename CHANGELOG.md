@@ -8,10 +8,56 @@ this file; their notes are on the
 
 lean-fmt is pre-1.0. Breaking changes raise the minor version.
 
-## Unreleased
+## 0.7.0 — 2026-08-13
+
+### Upgrading
+
+**One command lean-fmt cannot lay out no longer takes the whole file down.** Detection was already
+per command; refusal was per file, so a single command Lean's pretty-printer could not spell made
+the file an infrastructure failure and exit 2. That command now keeps its original bytes, the rest
+of the file formats, and the exit code is whatever the rest of the run earned. A whole-project run
+over mathlib4 refused 92 files this way; it now refuses none.
+
+If your CI treated exit 2 as "this file cannot be checked", it will now see those files pass with
+holes in them. The run says so three ways — a trailer line, `verbatim_commands=` under
+`--statistics`, and `verbatimCommands` on the JSON report and on each file — so assert
+`verbatimCommands` is `0` if you would rather they still fail. `docs/ci.md` has the shape of that
+job. Only a failure no command owns — the header, the terminal tail, the source map — still exits 2.
+
+**Two layout changes reformat code that was clean before.** Run `lean-fmt format` once after
+upgrading; `check` flags both until you do.
+
+- **A multi-item `where` body moves one column left,** onto the column the item list itself picked —
+  where its own docstring sits, and where `docs/style.md` always said it goes. Every `where` clause
+  with more than one binding, in every project, at every width, was one column right of it. A
+  one-item clause is unchanged.
+- **An empty structure instance is spelled `{}` instead of `{ }`.** This is now the
+  `empty-structure-instance` setting, and the default `"compact"` is what hand-written code in the
+  projects we format actually spells. Set `empty-structure-instance = "spaced"` under `[format]` to
+  keep Lean's own `{ }`. Neither spelling changes how the term parses.
+
+### Added
+
+- **`empty-structure-instance`**, `"compact"` (default) or `"spaced"`. See `docs/configuration.md`.
+- **`degradations` on the JSON report.** One entry per command that kept its original layout, with
+  the 1-based `line`, the syntax `kind`, the `gate` that refused the layout, and the `detail` it
+  refused with. The count says a file lost a layout; `kind` says which shape could not be spelled,
+  which is what a bug report needs. JSON only — SARIF results are findings about your code, and a
+  degradation is not one.
+- **`docs/upstream-defects.md`**, nine Lean pretty-printer defects with toolchain-only
+  reproductions, addressed to whoever files or fixes them rather than to anyone running lean-fmt.
 
 ### Fixed
 
+- **Files a run could not format at all now format.** A whole-project run over mathlib4 (8,862
+  files) is down to one. One cause was a token whose leading whitespace the parser attributed to no
+  leaf at all, reached through `optBinderIdent`; `Mathlib/Tactic/Have.lean` and
+  `Mathlib/Tactic/Replace.lean` were two of the eight files that failed on it.
+- **A run of comments between the same two tokens stays in source order.** Ownership was decided one
+  comment at a time, so a run of three could come back with the middle one hoisted above the other
+  two — and a file whose commented-out `local notation` was written that way was refused whole.
+- **A comment inside a region emitted verbatim no longer refuses the command.** The region's own
+  bytes already spell it.
 - **Commands carrying a `tok%$x` positional capture format instead of degrading.** Lean's formatter
   cannot spell one — `tokenWithAntiquot.formatter` runs the token formatter on the antiquotation
   expression, and the mismatch escapes as `uncaught backtrack exception` — so any command containing
@@ -24,6 +70,19 @@ lean-fmt is pre-1.0. Breaking changes raise the minor version.
   `many`, and `many1` build their wrapper inside the parser they return, so Lean's formatter spells
   them correctly, and standing a placeholder in the way is what made them fail. A command spelling
   `$[: $t]?` no longer keeps its original layout for that reason.
+- **`register_simp_attr`, `register_label_attr` and `register_grind_attr` lay out** instead of
+  keeping their original bytes. Their parsers declare a syntax node kind that names no constant, so
+  the lookup Lean's formatter does threw.
+- **A `syntax` command declaring a nested element list keeps its spaces.** Two separators the
+  grammar forgets made the formatted command declare a different grammar than the source did, which
+  the compiler noticed and lean-fmt then degraded.
+- **A file with several unspellable commands converges instead of being refused.** The validation
+  gates and the reparse each reported one site per attempt, so a file with three needed more rounds
+  than the retry bound allows.
+- **`format-ignore-next` covers a comment written above the directive.** The protected region used
+  to start at the directive itself, so an ordinary comment above it fell in a range nothing emitted.
+- **A degraded command is counted once**, however many gates named it. The count was always right;
+  the list a person reads carried duplicates.
 
 ## 0.6.0 — 2026-08-11
 
