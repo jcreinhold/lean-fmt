@@ -138,6 +138,16 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Read by `bump` and `adaptation-alert` below. The verdict step's own pass/fail is the same
+    # predicate `bump` gates on; these outputs are what let a second job act on it instead of a
+    # person reading a step summary.
+    outputs:
+      moved: ${{ steps.candidate.outputs.moved }}
+      candidate: ${{ steps.candidate.outputs.candidate }}
+      pinned: ${{ steps.candidate.outputs.pinned }}
+      build: ${{ steps.build.outcome }}
+      changed: ${{ steps.output.outputs.changed }}
+      drift: ${{ steps.region.outputs.drift }}
     steps:
       - uses: actions/checkout@v5
 
@@ -244,3 +254,198 @@ jobs:
           [ "$build" = "success" ] || fail=1
           [ "${changed:-1}" = "0" ] || fail=1
           exit $fail
+
+  # A bump the probe found mechanical — it builds, and not one canonical byte moves — has nothing
+  # left for a person to decide, so it arrives as a pull request rather than as a note in a step
+  # summary somebody reads next month. The predicate is the verdict step's own, spelled out in
+  # `if:` because a job cannot inherit another's exit status.
+  #
+  # The gate runs *here* rather than on the pull request: GitHub does not fire workflows for a PR
+  # opened by `GITHUB_TOKEN`, so a PR from this job would otherwise sit with no checks at all. The
+  # body records what ran, and pushing any commit to the branch starts ordinary CI on top.
+  bump:
+    needs: next-toolchain
+    if: >-
+      always() && needs.next-toolchain.outputs.moved == 'yes' &&
+      needs.next-toolchain.outputs.build == 'success' &&
+      needs.next-toolchain.outputs.changed == '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      CANDIDATE: ${{ needs.next-toolchain.outputs.candidate }}
+      PINNED: ${{ needs.next-toolchain.outputs.pinned }}
+      DRIFT: ${{ needs.next-toolchain.outputs.drift }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: move every version site
+        id: move
+        run: |
+          tag="${CANDIDATE#leanprover/lean4:}"
+          version="${tag#v}"
+          branch="bump/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
+          echo "$CANDIDATE" > lean-toolchain
+
+          # docs/manual is a second Lake package pinned to the same toolchain, and its verso rev
+          # must equal that toolchain too — pages.yml fails when either lags, which is a bump that
+          # documents a compiler the code no longer uses. Verso tags on Lean's own cadence, so it
+          # may not have this candidate yet: move the pair only when the tag really exists, rather
+          # than writing a rev that resolves to nothing.
+          manual=skipped
+          if git ls-remote --exit-code --tags \
+               https://github.com/leanprover/verso "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "$CANDIDATE" > docs/manual/lean-toolchain
+            sed -i "s|^rev = \"v[^\"]*\"|rev = \"$tag\"|" docs/manual/lakefile.toml
+            manual=moved
+          fi
+          echo "manual=$manual" >> "$GITHUB_OUTPUT"
+
+          sed -i "s|version := v!\"[^\"]*\"|version := v!\"$version\"|" lakefile.lean
+          # The literal sits on the line after the signature, so address the signature and edit
+          # the next line: a bare quote-substitution would rewrite the docstring above it.
+          sed -i "/^def version : String :=$/{n;s|\".*\"|\"$version\"|;}" LeanFmt/Basic.lean
+
+          # Example pins only. The historical sentence in README.md names v0.7.1 and its Lean in
+          # prose, matches none of these patterns, and must not move.
+          sed -i "s|@ \"v[^\"]*\"|@ \"$tag\"|g" README.md docs/ci.md
+          sed -i "s|--branch v[^ ]*|--branch $tag|" README.md
+          sed -i "s|# leanprover/lean4:v[^ ]*|# leanprover/lean4:$tag|" README.md
+
+          python3 - "$version" <<'PY'
+          import datetime, pathlib, sys
+          version = sys.argv[1]
+          path = pathlib.Path("CHANGELOG.md")
+          text = path.read_text()
+          head, sep, rest = text.partition("\n## ")
+          stub = (
+              f"\n## {version} — {datetime.date.today().isoformat()}\n\n"
+              "### Changed\n\n"
+              "- Serves Lean `v" + version + "`. No behaviour changed: the probe found this bump "
+              "mechanical, meaning lean-fmt built against it and not one canonical byte moved "
+              "across this repository.\n"
+          )
+          path.write_text(head + stub + sep + rest)
+          PY
+
+          git diff --stat
+
+      - uses: leanprover/lean-action@v1
+        with:
+          test: "false"
+
+      # The whole gate, because nothing else will run one on this branch. Not `--all`: the slow
+      # suites are the weekly hunt's job, and a bump that breaks one of those breaks a fast one
+      # first in every case this probe has seen.
+      - name: test
+        run: lake test
+
+      - name: open the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ steps.move.outputs.tag }}"
+          branch="${{ steps.move.outputs.branch }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          paths="lean-toolchain lakefile.lean LeanFmt/Basic.lean README.md docs/ci.md CHANGELOG.md"
+          if [ "${{ steps.move.outputs.manual }}" = "moved" ]; then
+            paths="$paths docs/manual/lean-toolchain docs/manual/lakefile.toml"
+          fi
+          # Explicit pathspecs: this repository is shared with concurrent sessions and a bare
+          # commit would sweep up whatever else is in the tree.
+          git commit -m "Serve Lean $tag" -- $paths
+          git push -f origin "$branch"
+          # Via a file, for the same reason the alert below uses one: prose inside a command
+          # substitution is one apostrophe away from a syntax error.
+          cat > pr-body.md <<EOF
+          Moves \`lean-toolchain\` from \`$PINNED\` to \`$CANDIDATE\`, and every site that has to
+          agree with it: \`lakefile.lean\`, \`LeanFmt/Basic.lean\`, the example pins in
+          \`README.md\` and \`docs/ci.md\`, \`docs/manual/lean-toolchain\`, and a CHANGELOG stub.
+
+          The probe found this bump **mechanical**: lean-fmt builds under \`$CANDIDATE\` and not
+          one canonical byte moves across this repository. Vendored \`Std.Format\` region:
+          \`${DRIFT:-not determined}\`.
+
+          \`docs/manual\`: **${{ steps.move.outputs.manual }}**. It moves only when verso has
+          tagged \`$tag\`; when it is skipped, verso has not, and the manual has to follow in a
+          second commit or \`pages.yml\` will fail on its pin check after this merges.
+
+          Gated in [the run that opened this](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          — \`lake build\`, \`lake lint\` and \`lake test\` all green there. GitHub does not start
+          workflows for a pull request opened by \`GITHUB_TOKEN\`, so no checks appear below;
+          push any commit to \`$branch\` to start ordinary CI on top of it.
+
+          Merging this does **not** release. Tagging is a separate, human step —
+          \`.claude/skills/release-lean-fmt/SKILL.md\`.
+          EOF
+          gh pr view "$branch" >/dev/null 2>&1 \
+            || gh pr create --base main --head "$branch" \
+                 --title "Serve Lean $tag" --body-file pr-body.md
+
+  # The probe went red, which means a person or an agent has to adapt something. The alert is a
+  # GitHub issue rather than a failed job: a failure is a red mark that ages out of anyone's
+  # attention in a week, and an issue is a work item that can be assigned, discussed, and handed
+  # to whichever tool is doing the adaptation. Deliberately does not start that work itself.
+  #
+  # One issue per candidate, created once: the probe re-runs weekly and re-reporting the same
+  # candidate every Monday is how an alert becomes noise nobody reads.
+  adaptation-alert:
+    needs: next-toolchain
+    if: >-
+      always() && needs.next-toolchain.outputs.moved == 'yes' &&
+      (needs.next-toolchain.outputs.build != 'success' ||
+       needs.next-toolchain.outputs.changed != '0')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CANDIDATE: ${{ needs.next-toolchain.outputs.candidate }}
+      PINNED: ${{ needs.next-toolchain.outputs.pinned }}
+      BUILD: ${{ needs.next-toolchain.outputs.build }}
+      CHANGED: ${{ needs.next-toolchain.outputs.changed }}
+      DRIFT: ${{ needs.next-toolchain.outputs.drift }}
+    steps:
+      - name: open one issue for this candidate
+        run: |
+          title="Toolchain probe red: $CANDIDATE"
+          existing=$(gh issue list --state open --search "\"$title\" in:title" \
+            --json number,title --jq "map(select(.title == \"$title\")) | .[0].number // empty")
+          if [ -n "$existing" ]; then
+            echo "already tracked as #$existing" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          gh label create toolchain-probe --color BFD4F2 \
+            --description "Raised by the next-toolchain probe" 2>/dev/null || true
+          # Via a file, not `--body "$(cat <<EOF ...)"`: an apostrophe in the prose ends the
+          # command substitution and the step dies on syntax rather than on anything real.
+          cat > issue-body.md <<EOF
+          \`$CANDIDATE\` is published and lean-fmt does not yet serve it. Pinned: \`$PINNED\`.
+
+          | signal | result |
+          | --- | --- |
+          | builds | \`$BUILD\` |
+          | vendored \`Std.Format\` region | \`${DRIFT:-not determined}\` |
+          | files whose canonical bytes move | \`${CHANGED:-not reached}\` |
+
+          [The probe run.](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          Checklist: \`docs/toolchain-upgrade.md\`. Procedure: the \`bump-toolchain\` skill.
+
+          A mechanical bump would have arrived as a pull request instead, so something here needs
+          judgement: either lean-fmt no longer builds against upstream, or it builds and the bytes
+          it produces have moved. Those are different problems — read the run's step summary before
+          starting, it separates them.
+
+          Nothing is running against this. Closing it without a bump is a decision to skip the
+          release; the probe will not raise it again for this candidate.
+          EOF
+          gh issue create --title "$title" --label toolchain-probe --body-file issue-body.md
+

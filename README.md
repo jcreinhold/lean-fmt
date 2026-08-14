@@ -181,6 +181,8 @@ For using lean-fmt:
 - `docs/style.md` — the canonical style, including `format-ignore-next` suppression.
 - `docs/configuration.md` — every config key, selection gates, streaming and ranges, workers, and the cache.
 - `docs/ci.md` — CI recipes, caching between runs, pinning and upgrading.
+- `docs/maintenance.md` — what happens when Lean moves: the release contract, what is automated, what a person decides,
+  and what to do if a release is late.
 - `docs/editor-setup.md` — the language server, with stanzas for VS Code, Neovim, and Emacs.
 - `docs/rules/` — one page per rule, generated from the registry.
 

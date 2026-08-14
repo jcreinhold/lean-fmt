@@ -1,0 +1,144 @@
+# The corpus gate: lean-fmt over all of mathlib4, in CI rather than on a maintainer's laptop.
+#
+# Why this exists: the strongest claim this project makes — how much of mathlib4 it reformats and
+# how much it refuses — was produced by one person on one machine with a locally built mathlib.
+# That is unverifiable to anyone else, however true it is, and it is the single-point-of-failure
+# in the quality story of a solo-maintained project. Here it is reproducible by anyone with a
+# fork, and a bump can carry its own corpus delta.
+#
+# Not on push, and not on pull requests: this is hours of runner time over ~8,900 files. Monthly,
+# plus dispatch when a candidate needs measuring.
+#
+# The mathlib checkout follows the toolchain-tag convention both projects share: mathlib4 tags
+# `v4.34.0-rc1` for the Lean of the same name, so the tag naming *our* `lean-toolchain` is also
+# the mathlib that compiles under it. When mathlib has not tagged a candidate yet, this fails
+# saying so rather than measuring the wrong corpus.
+#
+# `lake exe cache get` is load-bearing: building mathlib from source does not fit in a job. If the
+# cache is unavailable for a toolchain, this workflow cannot run for it, which is a fact about the
+# candidate rather than a defect here.
+
+name: Corpus
+
+on:
+  workflow_dispatch:
+    inputs:
+      mathlib-ref:
+        description: "mathlib4 ref to measure (default: the tag naming our lean-toolchain)"
+        required: false
+  schedule:
+    # Monthly. A corpus number has a date, not authority — this is what keeps the date recent.
+    - cron: "0 4 1 * *"
+
+permissions:
+  contents: read
+
+jobs:
+  corpus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v5
+
+      # mathlib's `.lake` plus its oleans do not fit beside a stock runner's preinstalled images.
+      # Removing them is the difference between this job running and dying on ENOSPC three hours
+      # in, which is the most expensive way to learn about disk.
+      - name: free disk
+        run: |
+          df -h / | awk 'NR==2 {print "before: " $4 " available"}'
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h / | awk 'NR==2 {print "after:  " $4 " available"}'
+
+      - uses: leanprover/lean-action@v1
+        with:
+          test: "false"
+          lint: "false"
+
+      - name: fetch the corpus
+        id: corpus
+        run: |
+          toolchain="$(cut -d: -f2 lean-toolchain | tr -d '[:space:]')"
+          ref="${{ inputs.mathlib-ref }}"
+          ref="${ref:-$toolchain}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          if ! git clone --depth 1 --branch "$ref" \
+              https://github.com/leanprover-community/mathlib4 ../mathlib4; then
+            echo "mathlib4 has no ref \`$ref\`; it has not tagged this toolchain yet." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "commit=$(git -C ../mathlib4 rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Building mathlib from source does not fit in a job; this is minutes instead of hours.
+      - name: restore mathlib's build
+        working-directory: ../mathlib4
+        run: |
+          lake exe cache get
+          lake build --no-build Mathlib
+
+      # Cold by construction: `--no-cache` neither reads nor writes `.lean-fmt-cache`, so this
+      # measures the same workload every month regardless of what a previous run left behind.
+      # Exit 1 means "files would be reformatted", which is the expected result, not a failure.
+      - name: measure
+        id: measure
+        working-directory: ../mathlib4
+        run: |
+          set +e
+          "$GITHUB_WORKSPACE/.lake/build/bin/lean-fmt" format --check --no-cache --root . \
+            --statistics --json > corpus.json 2> corpus.err
+          status=$?
+          set -e
+          echo "exit=$status"
+          stats=$(grep '^lean-fmt statistics:' corpus.err || true)
+          if [ -z "$stats" ]; then
+            echo "no statistics line; the run did not complete" >> "$GITHUB_STEP_SUMMARY"
+            tail -40 corpus.err >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "$stats"
+          for field in files changed rejected broken unbuilt verbatim_commands \
+                       infrastructure_failures validation_bypassed findings; do
+            value=$(printf '%s\n' "$stats" | sed -n "s/.*[ =]$field=\([0-9]*\).*/\1/p")
+            echo "$field=$value" >> "$GITHUB_OUTPUT"
+          done
+          gzip -9 corpus.json
+
+      - name: report
+        if: always() && steps.measure.outputs.files != ''
+        run: |
+          { echo "## mathlib4 \`${{ steps.corpus.outputs.ref }}\` @ \`${{ steps.corpus.outputs.commit }}\`"
+            echo ""
+            echo "| count | value |"
+            echo "| --- | --- |"
+            echo "| files | ${{ steps.measure.outputs.files }} |"
+            echo "| changed | ${{ steps.measure.outputs.changed }} |"
+            echo "| **rejected** | **${{ steps.measure.outputs.rejected }}** |"
+            echo "| broken | ${{ steps.measure.outputs.broken }} |"
+            echo "| unbuilt | ${{ steps.measure.outputs.unbuilt }} |"
+            echo "| verbatim_commands | ${{ steps.measure.outputs.verbatim_commands }} |"
+            echo "| infrastructure_failures | ${{ steps.measure.outputs.infrastructure_failures }} |"
+            echo "| validation_bypassed | ${{ steps.measure.outputs.validation_bypassed }} |"
+            echo "| findings | ${{ steps.measure.outputs.findings }} |"
+            echo ""
+            echo "A drop in \`verbatim_commands\` matched by a rise in \`rejected\` or"
+            echo "\`infrastructure_failures\` has moved defects, not fixed them. Read all three."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The per-file JSON is what a re-classification reads; the step summary is only the headline.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: corpus-${{ steps.corpus.outputs.ref }}
+          path: ../mathlib4/corpus.json.gz
+          if-no-files-found: warn
+
+      # Two counts must be zero for the headline claim to hold. Everything else is reported and
+      # judged by a person: a rise in `verbatim_commands` may be a regression or may be upstream.
+      - name: gate
+        run: |
+          fail=0
+          [ "${{ steps.measure.outputs.rejected }}" = "0" ] || fail=1
+          [ "${{ steps.measure.outputs.infrastructure_failures }}" = "0" ] || fail=1
+          exit $fail
