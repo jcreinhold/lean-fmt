@@ -4,16 +4,30 @@ Addressed to whoever files or fixes them, not to a consumer of `lean-fmt`. Each 
 toolchain-only reproduction — no Mathlib, no `lean-fmt` — so each can be pasted into a
 `leanprover/lean4` issue as-is.
 
-Measured 2026-08-13 against `lean-toolchain` `leanprover/lean4:v4.34.0-rc1`, with corpus figures from
-mathlib4 at `4a9d59a1cc`. Upstream line numbers are from a checkout based on `16fafca7f`; re-read
-before quoting them, they move. A measurement here has a date, not authority — regenerate rather than
-argue.
+Measured 2026-08-13 and 2026-08-14 against `lean-toolchain` `leanprover/lean4:v4.34.0-rc1`, with
+corpus figures from mathlib4 at `4a9d59a1cc`. Upstream line numbers are from a checkout based on
+`16fafca7f`; re-read before quoting them, they move. A measurement here has a date, not authority —
+regenerate rather than argue.
 
-The corpus figures come from two whole-project runs on that day, both cold-cache
+The corpus figures come from two whole-project runs on 2026-08-13, both cold-cache
 (`format --check --no-cache --root .`), before and after §3's and §5's repairs:
 `verbatim_commands` 421 → 334 and `uncaught backtrack exception` 239 → 149, with `rejected` 1,
 `broken` 0 and `infrastructure_failures` 0 in both. Where a section says "of the 421", it is quoting
 the first run.
+
+A third run of the same command on 2026-08-14, over the same corpus commit, on the released 0.7.1
+binary, carries §10's repair: `files` 8862, `changed` 8533, `rejected` **0**, `verbatim_commands`
+334, `findings` 3707, with `broken`, `unbuilt`, `validation_bypassed` and `infrastructure_failures`
+all 0. Per-file statuses are `clean` (329) and `would-format` (8533) and nothing else. It is what
+turns §10's "nothing now" from one file checked into a corpus with no refusal left in it, and the
+refusal was removed rather than relocated: `verbatim_commands` held at 334, and the two counts that
+would have absorbed a moved defect stayed at zero.
+
+That run's 334 degradations divide by the gate that refused them: 181 the layout, 71 formatting the
+result a second time, 49 the compiler's messages, 14 the comments, 13 the code's structure, 6 the
+tokens. This is a different cut from §12's table, which counts only the `uncaught backtrack
+exception` subset and totals 149; how the two decompositions line up was not established, and
+guessing a correspondence from the totals would be inventing one.
 
 Eleven defects, in two groups. §§1–5 are refusals: the formatter throws, and what they cost is
 counted in the ledger. §§6–11 are defects `lean-fmt` already compensates for, each at the price of a
@@ -642,7 +656,8 @@ carry position-less leaves too.
 Nothing now, and it cost the whole file before. `LosslessSource`'s tiling clause required every leaf
 to carry an original position, so any file with a Verso heading was refused outright — `rejected`,
 exit 1, nothing formatted. `MathlibTest/Linter/Header/Verso.lean` was the one file in mathlib4's
-8,862 that `lean-fmt` could not format at all.
+8,862 that `lean-fmt` could not format at all. The 2026-08-14 run reports it `would-format` with zero
+degradations, and `rejected` 0 across the corpus.
 
 `LeafInfo.absent`, `Token.positioned` and the three walks that consult it
 (`LeanFmt/LosslessSource.lean`, `LeanFmt/Suppression.lean`) are what a fix upstream would let us
