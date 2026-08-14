@@ -33,8 +33,9 @@ There is no compatibility table to consult and no version to choose. If the tag 
 pairing is right; every release asserts the two are equal, so a tag naming a toolchain it was not built against cannot
 be published.
 
-Lake builds lean-fmt from source — minutes once, free afterwards. It does not disturb your own build: adding the
-dependency to a fully built Mathlib leaves all 8,695 targets up to date, because nothing in your project imports it.
+Lake builds lean-fmt from source: 70 modules, half a minute on a 12-core laptop, and free afterwards. It does not
+disturb your own build either — adding the dependency to a fully built Mathlib leaves all 8,695 targets up to date,
+because nothing in your project imports it.
 
 For a `lean-fmt` on your `PATH` instead of `lake exe lean-fmt` (`PREFIX=/usr/local` to override, `DESTDIR` to stage,
 `make uninstall` to remove). With elan on `PATH` this installs the matching toolchain itself:
