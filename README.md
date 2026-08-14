@@ -43,6 +43,10 @@ For a `lean-fmt` on your `PATH` instead of `lake exe lean-fmt` (`PREFIX=/usr/loc
 git clone --branch v4.34.0-rc1 https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
 ```
 
+Windows is untested rather than unsupported. Nothing in lean-fmt is written against a Unix-only interface, but there is
+no Windows CI leg and the test harness itself reads `ps`, so no suite has ever run there. If you try it, a report either
+way is useful.
+
 Releases through `v0.7.1` used semantic versions and a compatibility table; `v0.7.1` is the last of them and pairs with
 Lean `v4.34.0-rc1`. Those tags stay where they are, and prebuilt binaries are no longer published.
 
