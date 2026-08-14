@@ -171,7 +171,7 @@ private def bodyIndents (text header : String) : IO (List Nat) := do
   let some index :=
     lines.findIdx? (· == header) | throw <| IO.userError s!"bodyIndents: {header} not found"
   let body := (lines.drop (index + 1)).takeWhile (· != "")
-  return body.map fun line => line.length - (line.dropWhile (· == ' ')).length
+  return body.map fun line => line.length - (line.dropWhile (· == ' ')).positions.length
 
 /-- §2b: one operator chain, one column. Lean's generated formatters wrap every category node in
 `group (nest format.indent …)`, so a chain — one node per link — stacks one `nest` per link, and each

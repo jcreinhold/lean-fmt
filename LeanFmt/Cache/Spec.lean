@@ -361,7 +361,7 @@ theorem verdict_complete (hobs : Faithful sd gd o w) (hschema : e.schema = w.sch
     · rw [hbuilt.2.1, hobs.2.2 e.mod]
   simp only [elaborationVerdict?]
   rw [hid]
-  exact if_pos rfl
+  exact ite_eq_left rfl
 
 /-! ## Anti-vacuity
 

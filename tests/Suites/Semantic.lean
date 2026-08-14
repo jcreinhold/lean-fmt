@@ -49,7 +49,7 @@ private def byteOffset (source : String) (line col : Nat) : Nat :=
   let before := (lines.take (line - 1)).foldl (fun acc l => acc + l.utf8ByteSize + 1) 0
   let current := lines[line - 1]?.getD ""
   -- `col` counts codepoints; take that many characters and measure the bytes.
-  before + ((current.toList.take col).asString).utf8ByteSize
+  before + (String.ofList (current.toList.take col)).utf8ByteSize
 
 /-- The `lean --json` oracle: one JSON object per line, for lines that are objects. -/
 private def leanOracle (ctx : Ctx) (fixture : String) : IO (Array Lean.Json) := do

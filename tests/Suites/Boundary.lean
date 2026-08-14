@@ -69,7 +69,7 @@ private def testNoTrackedArtifacts (root : System.FilePath) : IO Unit := do
 
 /-- Lines whose first token is `keyword` followed by whitespace (or the whole line). -/
 private def startsWithKeyword (line keyword : String) : Bool :=
-  let trimmed := line.trimLeft
+  let trimmed := line.trimAsciiStart.toString
   trimmed.startsWith s!"{keyword} " || trimmed == keyword
 
 private def testRootExportsNothing (root : System.FilePath) : IO Unit := do
@@ -160,7 +160,7 @@ private def testNoLeanServer (root : System.FilePath) : IO Unit := do
   -- position resolves past the end of the buffer. Scoped to this module on purpose:
   -- `LeanFmt/Analysis.lean` imports `Lean.Server.InfoUtils` and should.
   for line in (← readRepoFile root "LeanFmt/LanguageServer.lean").splitOn "\n" do
-    let trimmed := line.trimLeft
+    let trimmed := line.trimAsciiStart.toString
     ensure
         (!(trimmed.startsWith "import Lean.Server" || trimmed.startsWith "import all Lean.Server"))
         "the language server imports Lean.Server; its position layer must clamp"
@@ -248,7 +248,7 @@ private def testPackageIdentity (root : System.FilePath) : IO Unit := do
       "the lakefile lost its executable declaration"
   let some packaged :=
     lines.findSome? fun line =>
-      (line.trimLeft.dropPrefix? "version := v!\"").map fun rest =>
+      (line.trimAsciiStart.toString.dropPrefix? "version := v!\"").map fun rest =>
         (rest.toString.takeWhile (· != '"')).toString
     | throw <| IO.userError "the lakefile lost its version"
   ensureEq "the reported version drifted from the package version" packaged LeanFmt.version
