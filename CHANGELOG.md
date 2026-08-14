@@ -6,7 +6,39 @@ Notable changes in each release, and what you have to do about them. Versions be
 this file; their notes are on the
 [releases page](https://github.com/jcreinhold/lean-fmt/releases).
 
-lean-fmt is pre-1.0. Breaking changes raise the minor version.
+Releases are named for the Lean toolchain they serve. Releases through 0.7.1 used semantic versions
+and a compatibility table; 0.7.1 is the last of those and serves Lean `v4.34.0-rc1`.
+
+## 4.34.0-rc1 — 2026-08-14
+
+### Upgrading
+
+**The release tag is now the Lean toolchain, and there are no prebuilt binaries.** Take lean-fmt as a
+Lake dependency, pinned to the tag spelled exactly like your `lean-toolchain`:
+
+```lean
+require «lean-fmt» from git
+  "https://github.com/jcreinhold/lean-fmt" @ "v4.34.0-rc1"
+```
+
+Then `lake update «lean-fmt»` and run it as `lake exe lean-fmt`. `make install` still puts a
+`lean-fmt` on your `PATH` from a source checkout.
+
+Three things this replaces. **`install.sh` is gone**, along with the release tarballs and
+`SHA256SUMS`; a job that downloaded a binary now builds from source, and `docs/ci.md` shows what to
+cache so it is paid once. **The README's compatibility table is gone** — if the tag matches your
+`lean-toolchain`, the pairing is right, and every release asserts the two are equal, so a tag naming
+a toolchain it was not built against cannot be published. **`lean-fmt --version` reports the
+toolchain** it serves rather than a semantic version.
+
+Existing `v0.x` tags stay where they are and keep working. Requiring lean-fmt does not invalidate
+your build: adding the dependency to a fully built Mathlib leaves all 8,695 targets up to date,
+because nothing in your project imports it.
+
+### Changed
+
+- The package declares `fixedToolchain := true`, so a consumer on a different toolchain fails at
+  resolution rather than somewhere deep in a build.
 
 ## 0.7.1 — 2026-08-13
 

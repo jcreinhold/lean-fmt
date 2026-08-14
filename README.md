@@ -10,50 +10,52 @@ control characters. Some carry fixes. `lean-fmt rules` lists them all.
 
 ## Install
 
-First, check which Lean your project is on:
+lean-fmt serves exactly one Lean toolchain — it loads your project's `.olean`s, and those load only in the compiler that
+wrote them. So **the release tag is the toolchain**. Read yours:
 
 ```sh
-cat lean-toolchain
+cat lean-toolchain      # leanprover/lean4:v4.34.0-rc1
 ```
 
-A lean-fmt build serves exactly one Lean toolchain — it loads your project's `.olean`s, and those load only in the
-compiler that wrote them. Find your row:
+and require the tag of the same name:
 
-| lean-fmt | Lean |
-| --- | --- |
-| 0.6.0 – 0.7.1 | `v4.34.0-rc1` |
-| 0.5.0 | `v4.33.0` |
-| 0.4.0, 0.4.1 | `v4.33.0-rc2` |
-| 0.2.0 – 0.3.1 | `v4.33.0-rc1` |
-
-If your toolchain is not in that table, the binary will refuse your project and say so. Take the Lake dependency below
-instead: it moves your project onto lean-fmt's toolchain rather than requiring you to match it.
-
-Prebuilt binary (Linux and macOS, x86-64 and ARM) into `~/.local/bin`; `PREFIX` and `VERSION` override the prefix and
-the release. Run it from your project directory and it checks the pairing above for you:
+```lean
+require «lean-fmt» from git
+  "https://github.com/jcreinhold/lean-fmt" @ "v4.34.0-rc1"
+```
 
 ```sh
-curl -sSfL https://raw.githubusercontent.com/jcreinhold/lean-fmt/main/install.sh | sh
+lake update «lean-fmt»
+lake exe lean-fmt format --check
 ```
 
-From source (`PREFIX=/usr/local` to override, `DESTDIR` to stage, `make uninstall` to remove). With elan on `PATH`, this
-installs the matching toolchain itself:
+There is no compatibility table to consult and no version to choose. If the tag matches your `lean-toolchain`, the
+pairing is right; every release asserts the two are equal, so a tag naming a toolchain it was not built against cannot
+be published.
+
+Lake builds lean-fmt from source — minutes once, free afterwards. It does not disturb your own build: adding the
+dependency to a fully built Mathlib leaves all 8,695 targets up to date, because nothing in your project imports it.
+
+For a `lean-fmt` on your `PATH` instead of `lake exe lean-fmt` (`PREFIX=/usr/local` to override, `DESTDIR` to stage,
+`make uninstall` to remove). With elan on `PATH` this installs the matching toolchain itself:
 
 ```sh
-git clone https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
+git clone --branch v4.34.0-rc1 https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
 ```
 
-`lean-fmt --version` reports both numbers, so it always answers which Lean a given binary is for.
-
-There is no Windows build; on Windows take the Lake dependency.
+Releases through `v0.7.1` used semantic versions and a compatibility table; `v0.7.1` is the last of them and pairs with
+Lean `v4.34.0-rc1`. Those tags stay where they are, and prebuilt binaries are no longer published.
 
 ## First run
 
 From your project root:
 
 ```sh
-lean-fmt format --check
+lake exe lean-fmt format --check
 ```
+
+Every command below is spelled `lean-fmt …` for brevity. Through the Lake dependency the spelling is `lake exe
+lean-fmt …`; after `make install` the bare name works.
 
 Nothing is written. It names the files that would change, then says what it did:
 
@@ -124,20 +126,7 @@ from. `[format]` and `[lint]` take more keys than these; `docs/configuration.md`
 
 ## In another project
 
-To run lean-fmt from a Lake build, add the dependency. Lake builds it from source, which takes minutes once and is free
-after that:
-
-```lean
-require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v0.7.1"
-```
-
-```sh
-lake update «lean-fmt»   # add it to the manifest, and move lean-toolchain to lean-fmt's
-lake exe lean-fmt check
-```
-
-To make `lake lint` run it, add two lines to your package. A package has one lint driver, so if you already have one,
+§"Install" covers the dependency itself. To make `lake lint` run it, add two lines to your package. A package has one lint driver, so if you already have one,
 keep it and run `lake exe lean-fmt check` as its own step:
 
 ```lean

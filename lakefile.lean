@@ -17,7 +17,13 @@ Both driver names need guillemets: `lean-fmt` is not a legal Lean identifier and
 driver by `String.toName`, so the bare spelling does not find the executable. The downstream suite's
 `lint-driver` case pins the consuming form, which needs them in the package half too. -/
 package «lean-fmt» where
-  version := v!"0.7.1"
+  -- The version is the Lean toolchain this build serves, and the release tag is spelled the same
+  -- way: a build loads the consumer's `.olean`s, and those load only in the compiler that wrote
+  -- them, so there is exactly one right answer per toolchain and no second axis to carry.
+  version := v!"4.34.0-rc1"
+  -- Lake's own statement of that constraint, and what makes a mismatched consumer fail at
+  -- resolution rather than somewhere deep in a build.
+  fixedToolchain := true
   testDriver := "«test-suites»"
   lintDriver := "«lean-fmt»"
   lintDriverArgs := #["check"]

@@ -244,27 +244,25 @@ and is idempotent. `--no-cache` neither reads nor writes it, which is what a job
 
 ## Installing and upgrading
 
-Two ways in, by what the job needs. A job that only runs the **CLI** can skip the from-source build — the release
-binaries are statically self-contained:
-
-```sh
-curl -sSfL https://raw.githubusercontent.com/jcreinhold/lean-fmt/main/install.sh | sh
-```
-
-A job that uses the **compiler plugin or the cache facet** cannot: a plugin must be built against the consuming
-project's own toolchain, so that integration still takes `lean-fmt` as an ordinary Lake dependency and builds it from
-source. `README.md` §"In another project" covers that dependency; the rest of this section is about the pin.
-
-**Pin a revision.** `require` without a revision follows the default branch, which makes CI non-reproducible: a push to
-lean-fmt changes your build with no commit of yours.
+One way in: a Lake dependency, built from source, pinned to the tag that names your toolchain. There are no prebuilt
+binaries — a plugin has to be built against the consuming project's own compiler anyway, so a downloaded binary could
+never have served the plugin or the cache facet.
 
 ```lean
-require «lean-fmt» from git "https://github.com/jcreinhold/lean-fmt" @ "<commit-sha-or-tag>"
+require «lean-fmt» from git "https://github.com/jcreinhold/lean-fmt" @ "v4.34.0-rc1"
 ```
 
-Releases are tagged (`v0.1.0` and later), so a tag is the pin to use; a commit SHA works the same way. The resolved
-revision lands in `lake-manifest.json` either way. **Commit that file.** It is what makes a CI run reproduce a local
-one.
+**The tag is the toolchain.** Whatever `lean-toolchain` names, require the tag spelled the same way. Nothing else needs
+checking, and there is no compatibility table to get wrong.
+
+**Pin it.** `require` without a revision follows the default branch, which makes CI non-reproducible: a push to lean-fmt
+changes your build with no commit of yours. A commit SHA works too, when you want a fix that landed after a tag. The
+resolved revision lands in `lake-manifest.json` either way. **Commit that file.** It is what makes a CI run reproduce a
+local one.
+
+**Requiring lean-fmt does not invalidate your build.** Nothing in your project imports it, so your modules keep their
+traces: adding the dependency to a fully built Mathlib leaves all 8,695 targets up to date. Only lean-fmt itself has to
+build, which is what the cache below is for.
 
 **Moving the pin.** Edit the revision in the lakefile, then `lake update «lean-fmt»` to re-resolve that one dependency
 and rewrite the manifest; bare `lake update` re-resolves everything. The manifest records the package under its
@@ -287,10 +285,10 @@ Expect three things to change:
 
 **Toolchain bumps.** lean-fmt's `lean-toolchain` and the consumer's must match. Lean's ABI is not stable across
 releases, and the compiler plugin — if you use it — is a shared library loaded into your compiler. A mismatch is not a
-soft failure. On a bump:
+soft failure. Because the tag names the toolchain, a bump is one edit in two places that have to agree:
 
 ```sh
-# 1. move both pins to the same toolchain
+# 1. move lean-toolchain, and move the require tag to the same string
 # 2. re-resolve and rebuild from clean
 lake update
 lake build
