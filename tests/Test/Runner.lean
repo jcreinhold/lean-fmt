@@ -72,8 +72,11 @@ private def registered : Array Suite :=
     { name := "performance", lane := .workspace, slow := true },
     { name := "stream", lane := .workspace, slow := true },
     { name := "style", lane := .«parallel» }, { name := "suppression", lane := .workspace },
-    { name := "syntax", lane := .workspace }, { name := "validator", lane := .«parallel» },
-    { name := "watch", lane := .exclusive }, { name := "compiler", lane := .exclusive },
+    { name := "syntax", lane := .workspace },
+    -- Workspace rather than parallel because it runs `lake env` in this package's workspace.
+    { name := "upstream-defects", lane := .workspace },
+    { name := "validator", lane := .«parallel» }, { name := "watch", lane := .exclusive },
+    { name := "compiler", lane := .exclusive },
     { name := "format-suppression", lane := .«parallel» },
     { name := "formatter", lane := .«parallel» },
     { name := "formatter-adapter", lane := .«parallel» },

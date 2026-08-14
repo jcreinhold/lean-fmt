@@ -36,7 +36,7 @@ plugin and cache facet require anyway. Releases through `v0.7.1` shipped tarball
 | weekly, probe red | `adaptation-alert` opens one issue for that candidate | a work item, labelled `toolchain-probe`, not started |
 | weekly | the flake-hunt: the default suite set twice, plus every slow suite | an intermittent failure nobody exercises is one everybody ships |
 | monthly | `corpus` runs lean-fmt over all of mathlib4 | counts published to the run summary, per-file JSON uploaded, `rejected` and `infrastructure_failures` gated at zero |
-| every push and PR | the sharded suite matrix | the 39 suites |
+| every push and PR | the sharded suite matrix | the 40 suites, one of which asserts every recorded upstream defect still reproduces |
 | on a `v*` tag | `verify-tag`, then the full gate on four platforms | a Release page; nothing is packaged |
 
 A bump that builds and moves no canonical bytes has nothing left to decide, so it arrives as a reviewable pull request
@@ -52,7 +52,10 @@ The automation deliberately stops short of four things, because each needs a jud
 - **Accepting a corpus change.** A drop in `verbatim_commands` matched by a rise in `rejected` has moved defects rather
   than fixed them. Only `rejected` and `infrastructure_failures` are gated; the rest is reported for a person to read.
 - **Whether an upstream change is a defect to report or a contract to adopt.** `docs/upstream-defects.md` holds twelve
-  reproductions that are the material for that decision.
+  reproductions that are the material for that decision, and the `upstream-defects` suite asserts that each one still
+  reproduces. A red `upstream-defects` is the good kind of red: it means Lean fixed something this project pays for,
+  and the failure message names the mechanism to delete. It is also the one signal that separates that case from
+  "upstream broke us", which the toolchain probe alone cannot tell apart.
 - **The tag push.** Releases are not automatic. A tag that consumers pin is costly to move, so it stays a deliberate act.
 
 ## If a release is late

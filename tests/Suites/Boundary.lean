@@ -114,9 +114,9 @@ private def testEntryPointSet (root : System.FilePath) : IO Unit := do
       "tests/Suites/Reporting.lean", "tests/Suites/Scale.lean", "tests/Suites/SecurityBench.lean",
       "tests/Suites/Semantic.lean", "tests/Suites/Stream.lean", "tests/Suites/Style.lean",
       "tests/Suites/Suppression.lean", "tests/Suites/Syntax.lean",
-      "tests/Suites/TermFormatter.lean", "tests/Suites/Validator.lean", "tests/Suites/Watch.lean",
-      "tests/Test/Runner.lean", "tests/Test/Unit.lean", "tools/CheckModules.lean",
-      "tools/LeanFmtArtifactExtract.lean"]
+      "tests/Suites/TermFormatter.lean", "tests/Suites/UpstreamDefects.lean",
+      "tests/Suites/Validator.lean", "tests/Suites/Watch.lean", "tests/Test/Runner.lean",
+      "tests/Test/Unit.lean", "tools/CheckModules.lean", "tools/LeanFmtArtifactExtract.lean"]
   ensureEq "active public entry-point set changed" expected.toList (entries.qsort (· < ·)).toList
 
 private def testPluginImportBoundary (root : System.FilePath) : IO Unit := do

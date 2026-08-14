@@ -64,6 +64,23 @@ def tryFmt (label s : String) : CoreM Unit := do
 
 Run it with `lake env lean <file>`, never bare `lean` — bare `lean` reports an incompatible header.
 
+Every §1–§9 row below is already written down that way, preambles included, in
+`tests/fixtures/upstream-defects/Probe.lean`:
+
+```sh
+lake env lean tests/fixtures/upstream-defects/Probe.lean
+```
+
+The `upstream-defects` suite runs it and asserts that each of those sections **still reproduces**,
+because nothing else here does: every other suite asserts lean-fmt behaves correctly, which stays
+true whether or not the defect underneath is still there. A section that stops reproducing fails
+that suite with the mechanism it lets us delete named in the message. §§10–11 are covered the same
+way by the `lossless` suite's `stranded-trivia` and `verso-heading` cases, which assert both halves
+already; §12 is residue and has nothing to expire.
+
+Prefer the fixture to the tables below when the two disagree, and fix the table. Two of them had
+rotted by the time it was written, and both corrections are noted in place.
+
 To sweep a real file instead of a string, parse it command by command with `Parser.parseHeader` and
 `Parser.parseCommand` and call `formatCommand` on each; that scanner is how the families below were
 found. Note that its failures are neither a subset nor a superset of `lean-fmt`'s degradations:
@@ -114,14 +131,20 @@ syntax "pp4 " (term <|> interpolatedStr(term)) : term
 
 | input | result |
 | --- | --- |
-| `pp3 foo` | **OK, and the argument is gone**: formats to `example :=` |
+| `pp3 foo` | **OK, and the argument is gone**: formats to `example :=\n  pp3` |
 | `pp3 1` | THREW `Unknown constant «1»` |
 | `pp3 (foo)` | THREW `Unknown constant «)»` |
 | `pp3 (foo bar)` | THREW `Unknown constant «)»` |
 | `pp3 foo + bar` | THREW `Unknown constant «+»` |
 | `pp3 ⟨foo⟩` | THREW `Unknown constant «⟩»` |
-| `pp3 "x"` | OK |
+| `pp3 "x"` | OK, and the `"pp3 "` atom's trailing space is lost: `example :=\n  pp3"x"` |
 | `pp4 (foo)`, `pp4 (foo bar)`, `pp4 "x"` | all OK — branches swapped, nothing breaks |
+
+Corrected 2026-08-14, from `tests/fixtures/upstream-defects/Probe.lean`: the first row recorded
+`example :=`, dropping the surviving `pp3` atom, and the `pp3 "x"` row recorded a bare OK. The atom
+survives its argument, minus the trailing space it spells — the same space `throwError "boom"` loses
+below. Neither correction changes what the section says; both were rows read from a scan rather than
+from a run.
 
 The thrown kind is the first atom or `null` node reached walking the argument's children
 right-to-left, which is why the same defect has several spellings. The `pp4` row is the control: plain
@@ -277,7 +300,19 @@ tests `stx.isToken sym`, the expression is not that token, and it throws backtra
 
 `tokenWithAntiquot` wraps `symbol`, `nonReservedSymbol` and `unicodeSymbol`, which is why every atom in
 the grammar can carry one and why quotations are not the boundary: `example : True := by exact%$t trivial`
-refuses on its own.
+reaches the same failure with no quotation anywhere in it.
+
+**Corrected 2026-08-14.** That last example was recorded here as refusing on its own. It does not.
+It formats, to `example : True := by`, and the whole tactic block is gone — the control
+`example : True := by exact trivial` formats intact, so the capture is what deletes it. The
+backtrack escapes only where nothing absorbs it; inside `by`, a surrounding combinator reads the
+failure as "this element is not there" and drops the element. Same mechanism, and the consequence §1
+is singled out for. Both rows are `s3-control-bare` and `s3-capture-bare` in
+`tests/fixtures/upstream-defects/Probe.lean`, which is where the correction came from.
+
+This matters for what the fix is worth: §3's cost is counted below in backtracks, and a silent
+deletion is not in that count. How much code the bare-atom shape deletes across a corpus was not
+measured.
 
 ### What it costs us
 

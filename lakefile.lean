@@ -286,6 +286,14 @@ lean_exe «suite-syntax» where
   root := `Suites.Syntax
   supportInterpreter := true
 
+/- The upstream-defect expiry suite: asserts that each toolchain defect `docs/upstream-defects.md`
+records still reproduces, so a fix upstream turns red rather than leaving a compensation mechanism
+dead and indistinguishable from a live one. Runs `lake env lean` over one fixture; workspace lane. -/
+lean_exe «suite-upstream-defects» where
+  srcDir := "tests"
+  root := `Suites.UpstreamDefects
+  supportInterpreter := true
+
 /- The suppression suite: source-suppression acceptance over committed fixtures. Clears the
 root .lean-fmt-cache in its preamble, so it serializes with the other workspace-touching suites. -/
 lean_exe «suite-suppression» where

@@ -81,6 +81,12 @@ Match the checks to the change:
   before running it, or it tests the previous commit and passes while your change is broken.
 - `watch`'s staged-empty case runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
   staged. Re-run it with a clean index.
+- `upstream-defects` is the only suite whose failure is good news. It runs
+  `tests/fixtures/upstream-defects/Probe.lean` and asserts that each defect §§1–9 of
+  `docs/upstream-defects.md` records **still reproduces**; going red means Lean fixed something this project
+  compensates for, and the message names the mechanism to delete. It is what separates that from "upstream broke us"
+  when the `next-toolchain` probe goes red. Do not silence a failure by relaxing the expectation — do the deletion, or
+  write down why the defect is still being paid for.
 - Two suites keep foreign adversaries on purpose: `validator` and `formatter` pipe through
   `tests/fixtures/formatter/candidate.py`, `style` through `tests/fixtures/style/expected_candidate.py`, and `editor`
   drives `tests/lsp/editor.lua` — the real `vim.lsp`, not a Lean model of it. Do not port those.
