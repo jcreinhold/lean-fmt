@@ -1,6 +1,6 @@
-# lean-fmt
+# lean-fmt — Lean 4 formatter and linter
 
-A formatter and linter for Lean 4.
+lean-fmt is a code formatter and static-analysis linter for Lean 4.
 
 The formatter rewrites Lean source into one canonical style (`docs/style.md`). lean-fmt re-parses every result and
 compares it token-for-token against the original, refusing whatever does not match.

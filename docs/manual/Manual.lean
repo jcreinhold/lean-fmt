@@ -8,7 +8,7 @@ import Manual.Configuration
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
-#doc (Manual) "The lean-fmt manual" =>
+#doc (Manual) "lean-fmt — Lean 4 Formatter and Linter" =>
 %%%
 tag := "top"
 shortTitle := "lean-fmt"
@@ -16,9 +16,10 @@ shortTitle := "lean-fmt"
 
 *Audience: anyone running lean-fmt.*
 
-lean-fmt formats and lints Lean 4 source. It has one style, so there is no house dialect to agree
-on and nothing to argue about in review: layout follows from the structure the compiler parsed and
-from one number, the line width.
+lean-fmt is a code formatter and linter for Lean 4. It formats Lean source into one canonical
+style and adds static-analysis rules for common source-level problems. With one style there is no
+house dialect to agree on and nothing to argue about in review: layout follows from the structure
+the compiler parsed and from one number, the line width.
 
 Every Lean example in this manual is compiled as the page is built. An example that stopped being
 valid Lean would break the build rather than sit here quietly being wrong.

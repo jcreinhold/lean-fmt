@@ -24,6 +24,12 @@ package «lean-fmt» where
   -- Lake's own statement of that constraint, and what makes a mismatched consumer fail at
   -- resolution rather than somewhere deep in a build.
   fixedToolchain := true
+  -- Reservoir indexes these fields straight off the package declaration; keep them in step with
+  -- the GitHub repository description and topics.
+  keywords := #["formatter", "linter", "formatting", "static-analysis", "code-formatter", "lean4"]
+  description := "Code formatter and linter for Lean 4, with editor and CI integration."
+  license := "Apache-2.0"
+  licenseFiles := #["LICENSE"]
   testDriver := "«test-suites»"
   lintDriver := "«lean-fmt»"
   lintDriverArgs := #["check"]
