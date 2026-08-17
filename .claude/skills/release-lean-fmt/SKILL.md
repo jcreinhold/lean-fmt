@@ -1,3 +1,8 @@
+---
+name: release-lean-fmt
+description: Cut a lean-fmt release — one tag per toolchain, named exactly as lean-toolchain (v4.34.0-rc1, not semver). Use when releasing lean-fmt, cutting or pushing a release tag, updating the version in lakefile.lean and LeanFmt/Basic.lean, writing the CHANGELOG section for a toolchain, or recovering from a failed release run.
+---
+
 # Release lean-fmt
 
 **The tag is the toolchain.** A release is tagged exactly as the `lean-toolchain` it was built against — `v4.34.0-rc1`,
