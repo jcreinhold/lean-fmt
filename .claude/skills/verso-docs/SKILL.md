@@ -106,8 +106,11 @@ means the markup nested wrong, not that Verso is broken.
 ## Publishing
 
 `.github/workflows/pages.yml` builds the manual on every push to `main` and publishes
-`_out/html-multi` to <https://www.jcreinhold.com/lean-fmt/> — the account's user site carries a
-custom domain, so project pages serve from it rather than from `github.io`. Pull requests build the
+`_out/html-multi` to <https://jcreinhold.github.io/lean-fmt/>. The apex domain 301s there
+permanently and serves nothing itself; that URL is the canonical one. Verso emits no search
+metadata (no meta description, no canonical link, no sitemap), so the workflow runs
+`scripts/pages-search-metadata.py` between the build and the upload to inject them — the host is
+hardcoded there because a canonical link cannot be relative. Pull requests build the
 manual and stop, so a stale example fails review rather than the deploy. The workflow follows the
 template Verso ships as `gh-setup/verso-literate-pages.yml`, adapted for the Manual genre.
 

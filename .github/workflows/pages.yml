@@ -6,9 +6,9 @@
 #
 # Verso emits relative URLs under a `<base href>` — `./` at the root, `./../` a level down — so the
 # site works unchanged at whatever subpath it lands on, with no base-URL configuration. It lands at
-# https://www.jcreinhold.com/lean-fmt/ rather than under github.io, because the account's user site
-# carries a custom domain and project pages inherit it. Nothing here depends on that: renaming the
-# repository or dropping the custom domain moves the site without needing an edit.
+# https://jcreinhold.github.io/lean-fmt/; the apex domain 301s there permanently and serves nothing
+# itself. The one place the host is hardcoded is scripts/pages-search-metadata.py (a canonical link
+# cannot be relative), so a host change means editing that file.
 #
 # The shape follows the template Verso ships as gh-setup/verso-literate-pages.yml, with two
 # departures, each noted where it appears: pull requests build the manual without deploying it, and
@@ -91,6 +91,13 @@ jobs:
         run: lake exe docs
         working-directory: docs/manual
         timeout-minutes: 30
+
+      # Verso emits no search metadata — no meta description, no canonical link, no sitemap — and
+      # RenderConfig has no head-injection hook, so they are added to the rendered site here,
+      # between the build and the upload. Without them Google guesses the snippet from body text
+      # and discovers the pages link by link.
+      - name: add search metadata
+        run: python3 "$GITHUB_WORKSPACE/scripts/pages-search-metadata.py" docs/manual/_out/html-multi
 
       # v5, not the v3 Verso's template pins: v3 pulls in upload-artifact@v4, which targets the
       # deprecated Node 20 and only runs because the runner forces it onto Node 24.
