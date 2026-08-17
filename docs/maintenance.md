@@ -1,6 +1,6 @@
 # How lean-fmt is maintained
 
-**Audience: anyone deciding whether to depend on this, and whoever maintains it next.** One question: what happens when
+One question: what happens when
 Lean moves, and which parts of the answer are automated.
 
 lean-fmt is maintained by one person. What follows is what has been automated so that depending on it does not depend on

@@ -98,8 +98,6 @@ tag := "top"
 shortTitle := "lean-fmt"
 %%%
 
-*Audience: anyone running lean-fmt.*
-
 lean-fmt is a formatter and linter for Lean 4.
 
 {include 1 Manual.Introduction}

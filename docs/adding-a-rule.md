@@ -1,6 +1,6 @@
 # Adding a rule
 
-**Audience: lean-fmt contributors.** Writing a new lint rule for lean-fmt itself. Rules are not pluggable from outside
+Writing a new lint rule for lean-fmt itself. Rules are not pluggable from outside
 the repository.
 
 Everything a rule is lives in `LeanFmt/Rules.lean`. A rule is a `RuleInfo` and a `RuleImpl`; the `RuleImpl` constructor

@@ -1,6 +1,6 @@
 # Running lean-fmt in CI
 
-**Audience: projects that use lean-fmt.** Installing the dependency is covered in `README.md` §"Install". This guide
+Installing the dependency is covered in `README.md` §"Install". This guide
 covers CI: the recipes, what to cache between runs, and what upgrading changes.
 
 Every `lean-fmt` and `lake` command below is executed by lean-fmt's own test suite against a real consuming project, so

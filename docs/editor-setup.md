@@ -1,7 +1,5 @@
 # Editor setup
 
-**Audience: anyone running lean-fmt.**
-
 `lean-fmt lsp` speaks the Language Server Protocol over stdio. It offers formatting, range formatting,
 formatting-derived code actions, and diagnostics — and nothing else. It runs *alongside* Lean's own language server, not
 instead of it.

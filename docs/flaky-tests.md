@@ -1,6 +1,6 @@
 # Intermittent test failures
 
-**Audience: lean-fmt maintainers.** This is about lean-fmt's own CI, not a consuming project's. For running lean-fmt in
+This is about lean-fmt's own CI, not a consuming project's. For running lean-fmt in
 your CI, see `docs/ci.md`.
 
 ## Do not retry an unfiled failure

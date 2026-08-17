@@ -1,6 +1,6 @@
 # Upgrading the pinned Lean toolchain
 
-**Audience: lean-fmt maintainers.** This checklist moves *this repository* to a new `lean-toolchain`. To upgrade
+This checklist moves *this repository* to a new `lean-toolchain`. To upgrade
 lean-fmt inside your own project, see `docs/ci.md` §"Upgrading in CI".
 
 lean-fmt is pinned to one toolchain and depends on Lean internals that are private or de-facto-stable rather than

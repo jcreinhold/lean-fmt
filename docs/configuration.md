@@ -1,7 +1,5 @@
 # Configuration reference
 
-**Audience: anyone running lean-fmt.**
-
 Configuration is optional. Without a config file, every root-relative `.lean` file outside `.lake` is checked with
 default settings.
 

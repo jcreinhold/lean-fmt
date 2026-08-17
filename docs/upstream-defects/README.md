@@ -1,7 +1,5 @@
 # Upstream defects nothing has been filed for
 
-**Audience: whoever files or fixes these, not a user of `lean-fmt`.**
-
 Eleven Lean toolchain defects, one file each, with a reproduction that needs only the toolchain —
 no Mathlib, no `lean-fmt` — so each can be pasted into a `leanprover/lean4` issue as-is. §§1–9 are
 pretty-printer defects (`formatCommand` throws or emits wrong bytes); §§10–11 are parser defects

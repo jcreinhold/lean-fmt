@@ -153,9 +153,6 @@ number does not.
 The prose rules that govern `docs/*.md` govern Verso documents too. They were applied across the whole tree in commit
 `713e219`; match them rather than reinventing a voice.
 
-- **Open with the audience.** Every document in `docs/` starts with a bolded line naming who it is for — "Audience:
-  anyone running lean-fmt." or "Audience: lean-fmt contributors." A reader who is in the wrong document should learn
-  that in one line. In Verso, bold that line as `*Audience: …*` — one asterisk, not markdown's two.
 - **No internal jargon.** *Candidate*, *admission*, *syntax frontier*, *projection*, *tier*, *the stack*, *offside base*
   name things a reader outside this repository cannot look up. Say what the thing does. If a term genuinely needs to
   exist in the document, define it with `{deftech}_term_` and refer to it with `{tech}[term]` — Verso will link every

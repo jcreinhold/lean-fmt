@@ -1,6 +1,6 @@
 # Canonical Lean style
 
-**Audience: anyone running lean-fmt.** This is what formatted source looks like, and why.
+This is what formatted source looks like, and why.
 
 `lean-fmt` has one style. Configuration chooses the line width (100 by default), not a family of competing layouts.
 Layout comes from the parsed structure of your code and the Lean syntax in scope; lean-fmt does not preserve source
