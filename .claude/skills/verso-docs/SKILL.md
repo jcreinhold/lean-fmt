@@ -78,7 +78,7 @@ What the script writes, and why each piece is there:
 | `docs/manual/lean-toolchain` | Must match the root `lean-toolchain` byte for byte |
 | `docs/manual/Main.lean` | The entry point: `manualMain (%doc Manual) (config := config)` |
 | `docs/manual/Manual.lean` | The root document — its `#doc` becomes the front page, and it `{include}`s the chapters |
-| `docs/manual/Manual/` | One module per chapter |
+| `docs/manual/Manual/` | One module per chapter (optional; the current manual is a single page, so this directory does not exist — `Main.lean` sets `htmlDepth := 0`) |
 
 The first `lake build` in that directory downloads and builds Verso, which takes minutes. It is
 cached afterward.
@@ -129,6 +129,9 @@ repository it is a one-time step — Settings → Pages → Source → GitHub Ac
 fails saying Pages is not enabled.
 
 ## Adding a chapter
+
+The manual is currently one page by choice: the content was too short to spread over four. If it
+grows enough to need chapters again, raise `htmlDepth` in `Main.lean` and then:
 
 1. Write `docs/manual/Manual/YourChapter.lean`. It opens with the imports, then one `#doc`.
 2. Import it from `docs/manual/Manual.lean`.

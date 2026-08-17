@@ -7,7 +7,7 @@ def config : RenderConfig where
   emitTeX := false
   emitHtmlSingle := .no
   emitHtmlMulti := .immediately
-  htmlDepth := 2
+  htmlDepth := 0
   sourceLink := some "https://github.com/jcreinhold/lean-fmt"
   issueLink := some "https://github.com/jcreinhold/lean-fmt/issues"
 
