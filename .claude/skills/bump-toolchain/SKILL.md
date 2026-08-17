@@ -18,8 +18,8 @@ before starting.
 
 1. `elan toolchain install leanprover/lean4:vX.Y.Z` (skip if installed), then move `lean-toolchain` to
    `leanprover/lean4:vX.Y.Z`.
-2. `lake build` and `lake exe lean-fmt-tests`. Compile errors here are the cheap half of the audit — a rename breaks
-   the build, which is the good case. A *behaviour* change does not; two load-bearing ones are listed in
+2. `lake build` and `lake exe lean-fmt-tests`. Compile errors here are the cheap half of the audit — a rename breaks the
+   build, which is the good case. A *behaviour* change does not; two load-bearing ones are listed in
    `docs/toolchain-upgrade.md` (`monitorBuild`, `finalizeBuild`).
 3. `lake lint` — the formatter over its own sources. Canonical-byte drift shows here first.
 4. Run the suites that pin upstream behaviour and read every failure as a claim about an upstream change *before*
@@ -34,11 +34,11 @@ before starting.
    version (Verso's tags follow Lean releases one for one), then `lake update verso` and `lake exe docs` in
    `docs/manual`. The Pages workflow fails when the toolchains disagree; the root bump is not done while they do.
 6. `lake test -- --all` plus `git diff --check`.
-7. If canonical bytes legitimately changed, re-freeze the mathlib sample under the new toolchain and name, in the
-   commit message, which upstream change moved which bytes. A bump that changes bytes without a named upstream cause
-   is an undiagnosed defect with a green suite — do not ship it.
-8. Cache and artifact compatibility need no migration: cache identity includes the toolchain, so the bump orphans
-   every entry wholesale by design, and the first run after pays full cost. Say so if anyone asks.
+7. If canonical bytes legitimately changed, re-freeze the mathlib sample under the new toolchain and name, in the commit
+   message, which upstream change moved which bytes. A bump that changes bytes without a named upstream cause is an
+   undiagnosed defect with a green suite — do not ship it.
+8. Cache and artifact compatibility need no migration: cache identity includes the toolchain, so the bump orphans every
+   entry wholesale by design, and the first run after pays full cost. Say so if anyone asks.
 
 Do not silence suites by "repairing" fixtures to match new output until you have decided the upstream change is
 legitimate (step 4). Do not commit the probe's runner-side `lean-toolchain` rewrite — that job adapts nothing; the

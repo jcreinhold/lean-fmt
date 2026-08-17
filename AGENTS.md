@@ -43,16 +43,15 @@ lake lint            # the formatter on itself, under lean-fmt.toml
 `lake` is the build system; the `Makefile` is the conventional front end (`make build`, `make test`) plus the GNU
 installer. It carries one thing lake does not: `make test-linux` archives `HEAD` plus your dirty files into an Ubuntu
 22.04 container and runs the suites there, with cached elan and lake volumes so repeats are minutes. The 22.04 userland
-is where platform-shaped failures surface (mtime granularity, cache-epoch contamination) and it is what the
-release legs run. First repro for any failure that smells platform-dependent.
+is where platform-shaped failures surface (mtime granularity, cache-epoch contamination) and it is what the release legs
+run. First repro for any failure that smells platform-dependent.
 
 `docs/manual` is a second Lake package, holding the Verso manual published to GitHub Pages by
-`.github/workflows/pages.yml`. None of the commands above touch it: it requires Verso, and the
-`lean-fmt` package requires nothing, because cache identity folds the ordered Lake environment and a
-dependency there would invalidate every entry whenever its pin moved. Build it with `lake exe docs`
-from that directory. Its `lean-toolchain` and its `verso` rev must equal the root `lean-toolchain`,
-and the Pages workflow fails when they do not — a bump that moves only the root leaves the manual
-documenting a compiler the code no longer uses.
+`.github/workflows/pages.yml`. None of the commands above touch it: it requires Verso, and the `lean-fmt` package
+requires nothing, because cache identity folds the ordered Lake environment and a dependency there would invalidate
+every entry whenever its pin moved. Build it with `lake exe docs` from that directory. Its `lean-toolchain` and its
+`verso` rev must equal the root `lean-toolchain`, and the Pages workflow fails when they do not — a bump that moves only
+the root leaves the manual documenting a compiler the code no longer uses.
 
 Suites are compiled Lean executables: `tests/Suites/<Name>.lean` builds as `suite-<name>`, and
 `tests/Test/Runner.lean`'s registry enumerates them with their lane. Read the registry, not a list in prose — an
@@ -81,12 +80,11 @@ Match the checks to the change:
   before running it, or it tests the previous commit and passes while your change is broken.
 - `watch`'s staged-empty case runs `check --staged` against *this* repository, so it fails whenever a `.lean` file is
   staged. Re-run it with a clean index.
-- `upstream-defects` is the only suite whose failure is good news. It runs
-  `tests/fixtures/upstream-defects/Probe.lean` and asserts that each defect §§1–9 of
-  `docs/upstream-defects/` records **still reproduces**; going red means Lean fixed something this project
-  compensates for, and the message names the mechanism to delete. It is what separates that from "upstream broke us"
-  when the `next-toolchain` probe goes red. Do not silence a failure by relaxing the expectation — do the deletion, or
-  write down why the defect is still being paid for.
+- `upstream-defects` is the only suite whose failure is good news. It runs `tests/fixtures/upstream-defects/Probe.lean`
+  and asserts that each defect §§1–9 of `docs/upstream-defects/` records **still reproduces**; going red means Lean
+  fixed something this project compensates for, and the message names the mechanism to delete. It is what separates that
+  from "upstream broke us" when the `next-toolchain` probe goes red. Do not silence a failure by relaxing the
+  expectation — do the deletion, or write down why the defect is still being paid for.
 - Two suites keep foreign adversaries on purpose: `validator` and `formatter` pipe through
   `tests/fixtures/formatter/candidate.py`, `style` through `tests/fixtures/style/expected_candidate.py`, and `editor`
   drives `tests/lsp/editor.lua` — the real `vim.lsp`, not a Lean model of it. Do not port those.
@@ -144,9 +142,9 @@ from code or tests is gone — when you cannot find why something is the way it 
   It rides `CanonicalLayout` and not the analysis because a hole is a property of a layout that published: a file that
   refused has a failure, not holes. The layout adapter decides none of this. It reports whether a command's own bytes
   are an admissible substitute (`FormatterFailure.verbatimAdmissible`) and `Analysis.buildFormatDraft` decides whether
-  to spend one, which is what makes `LEAN_FMT_STRICT_LAYOUT=1` reach every degradation and restore whole-file refusal
-  so a defect stays bisectable. A drop in infrastructure failures
-  matched by a rise in `verbatim_commands` has moved defects, not fixed them; read both.
+  to spend one, which is what makes `LEAN_FMT_STRICT_LAYOUT=1` reach every degradation and restore whole-file refusal so
+  a defect stays bisectable. A drop in infrastructure failures matched by a rise in `verbatim_commands` has moved
+  defects, not fixed them; read both.
 - Path errors name the caller's own argument, as `selected file does not exist: <arg>` does. New path-taking CLI surface
   — ranges, LSP URIs, integration entry points — pre-checks and does the same.
 - Rule selection is a projection over canonical results. It must not enter execution strategy or result-cache identity.

@@ -1,23 +1,20 @@
 # Intermittent test failures
 
-**Audience: lean-fmt maintainers.** This is about lean-fmt's own CI, not a consuming project's.
-For running lean-fmt in your CI, see `docs/ci.md`.
+**Audience: lean-fmt maintainers.** This is about lean-fmt's own CI, not a consuming project's. For running lean-fmt in
+your CI, see `docs/ci.md`.
 
 ## Do not retry an unfiled failure
 
-Re-running a failed job is legitimate only for a signature already in the ledger below. A retry
-on an unfiled signature trades a bug report for a coin flip, because the evidence lives on a
-runner that no longer exists.
+Re-running a failed job is legitimate only for a signature already in the ledger below. A retry on an unfiled signature
+trades a bug report for a coin flip, because the evidence lives on a runner that no longer exists.
 
-Every failure digest is built to be one cycle from a cause: heartbeats name the suite, indented
-followers carry the assertion's evidence, and the cache suite's forensics name the component that
-moved. File the signature with its run ID and digest first. Retry second, if the ledger says it
-is safe to.
+Every failure digest is built to be one cycle from a cause: heartbeats name the suite, indented followers carry the
+assertion's evidence, and the cache suite's forensics name the component that moved. File the signature with its run ID
+and digest first. Retry second, if the ledger says it is safe to.
 
 ## The ledger
 
-Worst first. A signature leaves this table by being root-caused and fixed, never by going quiet
-on its own.
+Worst first. A signature leaves this table by being root-caused and fixed, never by going quiet on its own.
 
 | Signature | First seen | Runs since | Status |
 | --- | --- | --- | --- |
@@ -29,16 +26,13 @@ on its own.
 
 ## Check the environment before blaming a test
 
-Each suite part streams memory and disk headroom (TELEM lines) every 15 seconds. The last sample
-before a kill usually names the resource. Only `ci.yml` emits them, and only on Linux — `free -m`
-has no macOS equivalent — so a failure on any other workflow arrives with no headroom record at
-all.
+Each suite part streams memory and disk headroom (TELEM lines) every 15 seconds. The last sample before a kill usually
+names the resource. Only `ci.yml` emits them, and only on Linux — `free -m` has no macOS equivalent — so a failure on
+any other workflow arrives with no headroom record at all.
 
-The fixes that pattern produced are load-bearing; removing any of them brings the whole class
-back:
+The fixes that pattern produced are load-bearing; removing any of them brings the whole class back:
 
-- `lake test -- --jobs 2` and `LEAN_NUM_THREADS=2` on CI. `--jobs` is the test runner's own flag,
-  passed through `--`; `lake` has no such option, and a run that omits it takes the runner's
-  default of four concurrent suites
+- `lake test -- --jobs 2` and `LEAN_NUM_THREADS=2` on CI. `--jobs` is the test runner's own flag, passed through `--`;
+  `lake` has no such option, and a run that omits it takes the runner's default of four concurrent suites
 - per-step timeouts
 - the search-path scrub in the test spawn layer

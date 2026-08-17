@@ -2,11 +2,11 @@
 
 Rules for the layout adapter. The root `AGENTS.md` owns the product constraints, and nothing here contradicts it.
 
-Lean ships both endpoints of the layout/fidelity axis and nothing in between. `Lean.Syntax.reprint`
-(`Lean/Syntax.lean`) emits `lead ++ val ++ trail` from each leaf's `SourceInfo`: exact source bytes, zero layout
-decisions. `Lean.PrettyPrinter` renders syntax the *elaborator* produced, for error messages, `#print`, and infoview
-hovers: every layout decision, no source fidelity — there is no original to be faithful to and nobody can diff the
-output against source.
+Lean ships both endpoints of the layout/fidelity axis and nothing in between. `Lean.Syntax.reprint` (`Lean/Syntax.lean`)
+emits `lead ++ val ++ trail` from each leaf's `SourceInfo`: exact source bytes, zero layout decisions.
+`Lean.PrettyPrinter` renders syntax the *elaborator* produced, for error messages, `#print`, and infoview hovers: every
+layout decision, no source fidelity — there is no original to be faithful to and nobody can diff the output against
+source.
 
 A formatter is the missing third row: full layout *and* exact fidelity. `NativeLayout.lean` is that row written out by
 hand, and most difficulty in it is a guarantee a printer has no reason to make. Each one already costs a mechanism
@@ -44,15 +44,15 @@ ninth and it goes in this list.
 - Ordinary upstream bugs, each repaired against the mechanism rather than the parser: `def ctor` puts the newline inside
   the `"\n| "` atom *after* `optional docComment`, so a constructor docstring renders as `where/-- doc -/` followed by a
   blank line, and at a narrow width its continuation lands at column zero (it still reparses onto the same constructor —
-  measured, see `docs/upstream-defects/06-ctor-docstring-newline.md`); `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
-  as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has;
-  `tokenWithAntiquot.formatter` answers a `tok%$x` capture with `visitArgs`, which runs the *token* formatter on the
-  node's last child — the antiquotation expression — so every atom in the grammar can carry a backtrack, quotation or
-  not. That last one is the only repair whose position admits no marker. Every other protection replaces a node in a
-  syntax *category* position, which accepts any leaf; a `token_antiquot` stands where an atom of one spelling does, so
-  an in-place marker reproduces the original failure byte for byte and protection escalates to the enclosing node
-  instead. Ask which kind of slot you are in before adding a protection — the four older ones assume a category slot
-  without saying so.
+  measured, see `docs/upstream-defects/06-ctor-docstring-newline.md`); `parserOfStack.formatter` reads one stack slot
+  short of the `ident`, so `` `(cat| body) `` dies as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent`
+  every other command-embedding parser has; `tokenWithAntiquot.formatter` answers a `tok%$x` capture with `visitArgs`,
+  which runs the *token* formatter on the node's last child — the antiquotation expression — so every atom in the
+  grammar can carry a backtrack, quotation or not. That last one is the only repair whose position admits no marker.
+  Every other protection replaces a node in a syntax *category* position, which accepts any leaf; a `token_antiquot`
+  stands where an atom of one spelling does, so an in-place marker reproduces the original failure byte for byte and
+  protection escalates to the enclosing node instead. Ask which kind of slot you are in before adding a protection — the
+  four older ones assume a category slot without saying so.
 
 Do not reimplement what Lean does do. `pushToken` inserts a discretionary space exactly when concatenation would re-lex
 as one token, using the real tokenizer; an adapter-side merge rule over-fires. Read `format.indent` through

@@ -1,18 +1,16 @@
 # 5. `sepByIndent.formatter` drops the antiquotation splice its own parser adds
 
-`sepByIndent`'s parser wraps its elements in `withAntiquotSpliceAndSuffix` — that is what makes
-`$[p];*` parse — but its hand-written formatter rebuilds the sequence by hand and never reproduces
-the wrapper. The element formatter meets the splice node directly, falls through to
-`formatterForKind`, and dies. A tactic sequence is a `sepBy1Indent`, which is why
+`sepByIndent`'s parser wraps its elements in `withAntiquotSpliceAndSuffix` — that is what makes `$[p];*` parse — but its
+hand-written formatter rebuilds the sequence by hand and never reproduces the wrapper. The element formatter meets the
+splice node directly, falls through to `formatterForKind`, and dies. A tactic sequence is a `sepBy1Indent`, which is why
 `` `(tactic| ($[…];*)) `` is the loud case.
 
-**Upstream:** `withAntiquotSpliceAndSuffix` (`src/Lean/Parser/Basic.lean:1923-1925`) has three bases
-in the toolchain — `optional` (`src/Lean/Parser/Extra.lean:41-42`), `many` (`:51-52`, `:66-67`), and
-`sepBy` (`:202-207`). In every case the wrapper is *inside the parser the combinator returns*, so
-the derived formatter carries `withAntiquot.formatter` and spells the splice. `sepByIndent` and
-`sepBy1Indent` then *override* that derived formatter with `sepByIndent.formatter`, which receives
-formatters for `sepByIndent`'s own arguments and rebuilds the sequence by hand — the splice the
-parser added is not reproduced.
+**Upstream:** `withAntiquotSpliceAndSuffix` (`src/Lean/Parser/Basic.lean:1923-1925`) has three bases in the toolchain —
+`optional` (`src/Lean/Parser/Extra.lean:41-42`), `many` (`:51-52`, `:66-67`), and `sepBy` (`:202-207`). In every case
+the wrapper is *inside the parser the combinator returns*, so the derived formatter carries `withAntiquot.formatter` and
+spells the splice. `sepByIndent` and `sepBy1Indent` then *override* that derived formatter with `sepByIndent.formatter`,
+which receives formatters for `sepByIndent`'s own arguments and rebuilds the sequence by hand — the splice the parser
+added is not reproduced.
 
 ## Reproduce
 
@@ -43,24 +41,22 @@ syntax "p7tac" (ppSpace ident)? : tactic
   tryFmt "ctrl4"  "def p7 (x? : Option Lean.Ident) : Lean.MacroM Lean.Syntax := `(tactic| p7tac $[$x?]?)" -- OK
 ```
 
-The four controls isolate the formatter rather than the splice: same bases, reached through the
-derived formatter or no override.
+The four controls isolate the formatter rather than the splice: same bases, reached through the derived formatter or no
+override.
 
 ## What it costs lean-fmt
 
-Nothing directly — `lean-fmt` protects `sepBy` splices as exact islands, so the tactic-sequence case
-never reaches the ledger. What it cost was the *shape* of that protection. Until 2026-08-13 the
-whole splice family was protected, on the reading that no formatter dispatches on any splice kind.
-That is true only of `sepBy` under `sepByIndent`, and an unnecessary marker is not free: standing
-one in for an `optional.antiquot_scope` throws `uncaught backtrack exception` where the toolchain
-would have formatted it. `Mathlib/Tactic/Have.lean`'s three `elab_rules`, each spelling
-`` `(tactic| have $n:optBinderIdent $bs* $[: $t:term]?) ``, degraded for exactly that reason, and
-now do not. That was the one file in §12's residue whose failure was already known to be ours.
+Nothing directly — `lean-fmt` protects `sepBy` splices as exact islands, so the tactic-sequence case never reaches the
+ledger. What it cost was the *shape* of that protection. Until 2026-08-13 the whole splice family was protected, on the
+reading that no formatter dispatches on any splice kind. That is true only of `sepBy` under `sepByIndent`, and an
+unnecessary marker is not free: standing one in for an `optional.antiquot_scope` throws `uncaught backtrack exception`
+where the toolchain would have formatted it. `Mathlib/Tactic/Have.lean`'s three `elab_rules`, each spelling
+`` `(tactic| have $n:optBinderIdent $bs* $[: $t:term]?) ``, degraded for exactly that reason, and now do not. That was
+the one file in §12's residue whose failure was already known to be ours.
 
 ## Pinned by
 
-`tests/fixtures/upstream-defects/Probe.lean` labels `s5-*`; asserted still-reproducing by case `s5`
-of `tests/Suites/UpstreamDefects.lean`. A fix upstream lets the `sepBy` clause of the splice-island
-protection be deleted too. Until then the base test is the whole discriminator: `sepBy` is
-protected because a `sepBy` splice cannot be told apart from `sepByIndent`'s, and a marker there was
-measured harmless.
+`tests/fixtures/upstream-defects/Probe.lean` labels `s5-*`; asserted still-reproducing by case `s5` of
+`tests/Suites/UpstreamDefects.lean`. A fix upstream lets the `sepBy` clause of the splice-island protection be deleted
+too. Until then the base test is the whole discriminator: `sepBy` is protected because a `sepBy` splice cannot be told
+apart from `sepByIndent`'s, and a marker there was measured harmless.

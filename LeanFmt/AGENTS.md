@@ -35,6 +35,6 @@ too.
 `unsafe` originates in `LeanFmt/Analysis.lean`, where the frontend requires it, and it is contagious to callers. The
 `IncrementalAnalyzer` surface is sealed back to safe code by four `@[implemented_by]`/`opaque` pairs, so the LSP path
 carries none of it; `analyzeExact` is not sealed, so the `unsafe def`s in `Application.lean`, `Cli.lean`, and
-`Main.lean` are that one propagation and nothing else. A new `unsafe` that is not propagation from `Analysis.lean`
-needs a reason in the commit message — and grep for the modifier, not the word: `unsafe` also names an `Applicability`
+`Main.lean` are that one propagation and nothing else. A new `unsafe` that is not propagation from `Analysis.lean` needs
+a reason in the commit message — and grep for the modifier, not the word: `unsafe` also names an `Applicability`
 constructor and the `--unsafe-fixes` flag.

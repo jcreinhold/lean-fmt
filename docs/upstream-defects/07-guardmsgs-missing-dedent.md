@@ -1,7 +1,7 @@
 # 7. `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has
 
-The command under `#guard_msgs in` (and `#guard_panic in`, `#guard_info_trees in`) renders indented
-one level, where `set_option … in` correctly puts its command at column zero.
+The command under `#guard_msgs in` (and `#guard_panic in`, `#guard_info_trees in`) renders indented one level, where
+`set_option … in` correctly puts its command at column zero.
 
 **Upstream:** `Init/Notation.lean:953-954` spells
 
@@ -11,11 +11,10 @@ syntax (name := guardMsgsCmd)
 ```
 
 Compare `src/Lean/Parser/Command.lean:886`, which spells
-`withOpen (withSetOption (ppDedent (" in" >> ppLine >> commandParser)))`.
-`categoryParser.formatter` (`src/Lean/PrettyPrinter/Formatter.lean:304-311`) wraps every category
-node in `nest format.indent`, so without the `ppDedent` the embedded command is indented one level.
-`guardPanicCmd` (`Init/Notation.lean:960-961`) and `infoTreesCmd` (`:968-969`) spell it the same way
-and have the same result.
+`withOpen (withSetOption (ppDedent (" in" >> ppLine >> commandParser)))`. `categoryParser.formatter`
+(`src/Lean/PrettyPrinter/Formatter.lean:304-311`) wraps every category node in `nest format.indent`, so without the
+`ppDedent` the embedded command is indented one level. `guardPanicCmd` (`Init/Notation.lean:960-961`) and `infoTreesCmd`
+(`:968-969`) spell it the same way and have the same result.
 
 ## Reproduce
 
@@ -38,15 +37,14 @@ def tryFmt (label s : String) : CoreM Unit := do
 
 ## What it costs lean-fmt
 
-Nothing in the ledger, and one mechanism: the `dedented` boundary keyed on the live `command`
-category rather than on a list of parsers that forgot
-(`LeanFmt/Formatter/NativeLayout.lean:1178-1200`; its citation of `Init/Notation.lean:938` is
-stale, the declaration is now at `:953`). A command must start at column zero — mathlib's
-`linter.style.whitespace` reports otherwise, and on `Mathlib/Tactic/Linter/ValidatePRTitle.lean`
-the indented candidate breaks the very `#guard_msgs` message that file asserts.
+Nothing in the ledger, and one mechanism: the `dedented` boundary keyed on the live `command` category rather than on a
+list of parsers that forgot (`LeanFmt/Formatter/NativeLayout.lean:1178-1200`; its citation of `Init/Notation.lean:938`
+is stale, the declaration is now at `:953`). A command must start at column zero — mathlib's `linter.style.whitespace`
+reports otherwise, and on `Mathlib/Tactic/Linter/ValidatePRTitle.lean` the indented candidate breaks the very
+`#guard_msgs` message that file asserts.
 
 ## Pinned by
 
-`tests/fixtures/upstream-defects/Probe.lean` labels `s7-*`; asserted still-reproducing by case `s7`
-of `tests/Suites/UpstreamDefects.lean`. A fix upstream retires the whole `dedented` boundary — it is
-keyed on the category, not on a list of the parsers that forgot, so there is no entry to remove.
+`tests/fixtures/upstream-defects/Probe.lean` labels `s7-*`; asserted still-reproducing by case `s7` of
+`tests/Suites/UpstreamDefects.lean`. A fix upstream retires the whole `dedented` boundary — it is keyed on the category,
+not on a list of the parsers that forgot, so there is no entry to remove.

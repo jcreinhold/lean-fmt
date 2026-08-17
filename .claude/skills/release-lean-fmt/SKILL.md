@@ -16,8 +16,8 @@ since a plugin is a shared library loaded into that compiler. Pushing the tag fi
 platform legs and then creates a GitHub Release carrying notes and nothing else. NEVER build and distribute a binary
 locally; a build that skips the four-leg gate is not a release.
 
-A botched tag is not permanent, but a tag that consumers and Lake manifests already pin is costly to move. Treat the
-tag push as irreversible.
+A botched tag is not permanent, but a tag that consumers and Lake manifests already pin is costly to move. Treat the tag
+push as irreversible.
 
 ## When there is a release to cut
 
