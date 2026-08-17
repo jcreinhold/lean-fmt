@@ -3,11 +3,10 @@ import VersoManual
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
-#doc (Manual) "lean-fmt" =>
+#doc (Manual) "lean-fmt: Lean 4 Formatter and Linter" =>
 %%%
 tag := "top"
 shortTitle := "lean-fmt"
-authorshipNote := some "Lean 4 formatter and linter"
 %%%
 
 lean-fmt formats Lean source into one canonical style and adds static-analysis rules for common
