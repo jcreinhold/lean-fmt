@@ -27,7 +27,7 @@ NON_CONTENT = {"find", "search"}
 
 # The root page's end-of-part "Contents" section links to child pages. A single-page manual has
 # none; the sidebar already carries the section links.
-CONTENTS_SECTION = re.compile(r"<section>\s*<h2>Contents</h2>.*?</section>", re.S)
+CONTENTS_SECTION = re.compile(r"<section>\s*<h2>\s*Contents</h2>.*?</section>", re.S)
 
 
 def main() -> None:
