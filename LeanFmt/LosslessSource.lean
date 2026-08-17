@@ -316,7 +316,7 @@ and a file the projection could represent perfectly well is refused instead. Mat
 
 Writing an antiquotation is what abandons the attempt. That parser's own `<|>` is not the cause: a
 lone `hygieneInfo` behind an antiquotation strands the byte alike, and the same parser strands none
-when its node is kept (measured 2026-08-13, `docs/upstream-defects.md` §11). This docstring said
+when its node is kept (measured 2026-08-13, `docs/upstream-defects/11-hygieneinfo-stranded-trivia.md`). This docstring said
 `takeLongest` before that was checked.
 
 `Token.leading`'s contract already says contiguity determines where a leading run begins; deriving

@@ -8,7 +8,7 @@ module
 
 import Lean
 
-/- The executable form of `docs/upstream-defects.md`'s reproductions for §§1-9, which are the
+/- The executable form of the §§1-9 reproductions in `docs/upstream-defects/`, which are the
 pretty-printer defects. Nothing here is compiled: no `lean_lib` globs this file, `lean-fmt.toml`
 excludes `tests/fixtures/**`, and the syntax below is deliberately the syntax the toolchain cannot
 format. Run it the way the document says to, never with a bare `lean`:
@@ -33,7 +33,7 @@ open Lean Parser PrettyPrinter
 def flat (s : String) : String :=
   (s.replace "\\" "\\\\").replace "\n" "\\n"
 
-/- `docs/upstream-defects.md`'s `tryFmt`, with the outcome tagged rather than prose. -/
+/- The `tryFmt` of `docs/upstream-defects/`'s reproductions, with the outcome tagged rather than prose. -/
 def probe (label s : String) (width : Nat := 100) : CoreM Unit := do
   match runParserCategory (← getEnv) `command s with
   | .error _ => IO.println s!"PROBE {label} PARSE-ERROR {flat s}"

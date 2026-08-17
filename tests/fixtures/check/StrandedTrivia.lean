@@ -10,7 +10,7 @@ steal that leaf's trailing whitespace. The rewritten leaf sits below the shrink 
 attempt that ran it is abandoned `ParserState.restore` rewinds the stack and the position without
 undoing the write, and the stolen space belongs to neither leaf. Writing an antiquotation is what
 abandons the attempt; the `<|>` below is not the cause, and a lone `hygieneInfo` behind one strands
-the byte alike (`docs/upstream-defects.md` §11).
+the byte alike (`docs/upstream-defects/11-hygieneinfo-stranded-trivia.md`).
 
 Below, the space between `stranded_have` and `$n` in the quotation is that byte. The lossless
 projection used to refuse the whole file for it ("leading trivia does not tile N-N+1"), which is

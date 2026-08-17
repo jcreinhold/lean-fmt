@@ -192,8 +192,8 @@ For working on lean-fmt:
 - `docs/adding-a-rule.md` — writing a lint rule.
 - `docs/toolchain-upgrade.md` — checklist for a `lean-toolchain` bump.
 - `docs/flaky-tests.md` — the ledger of intermittent CI failures, and the no-retry rule.
-- `docs/upstream-defects.md` — toolchain defects with no open `leanprover/lean4` item, each with a
-  toolchain-only reproduction.
+- `docs/upstream-defects/` — toolchain defects with no open `leanprover/lean4` item, one file
+  each with a toolchain-only reproduction.
 
 ## Develop
 

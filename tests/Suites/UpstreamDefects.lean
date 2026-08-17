@@ -8,7 +8,7 @@ public import Test
 Every other suite in this package asserts that lean-fmt behaves correctly, which stays true whether
 or not the toolchain defect underneath is still there. So a compensation mechanism that upstream has
 made unnecessary looks exactly like one that is still load-bearing, and the reproduction recorded in
-`docs/upstream-defects.md` quietly becomes fiction. This suite is the other half: it asserts each
+`docs/upstream-defects/` quietly becomes fiction. This suite is the other half: it asserts each
 defect **still reproduces**, and fails when one stops.
 
 That failure is the good kind. The weekly `next-toolchain` probe says something moved upstream; it
@@ -22,7 +22,7 @@ so a fix upstream already turns those red. §12 is residue: no reproduction, not
 
 `tests/fixtures/upstream-defects/Probe.lean` is the reproduction, run once by `main`; this file is
 the expectation. The split matters: the fixture must be runnable by hand exactly as
-`docs/upstream-defects.md` says to run it, and only this file knows what each row costs us.
+`docs/upstream-defects/README.md` says to run it, and only this file knows what each row costs us.
 
 Two disciplines the assertions follow, both learned the hard way:
 
@@ -61,11 +61,13 @@ private structure Probe where
   needle : String := ""
   absent : String := ""
 
-/-- One section of `docs/upstream-defects.md`. -/
+/-- One file of `docs/upstream-defects/`. -/
 private structure Defect where
   id : Nat
-  /-- The document's heading, verbatim. Renumbering or retitling a section is a change to the
-  record this suite is anchored to, so it is asserted rather than assumed. -/
+  /-- The file under `docs/upstream-defects/`, named `<NN>-<slug>.md`. -/
+  file : String
+  /-- The file's H1, verbatim after the `# ` prefix. Renumbering or retitling a defect is a change
+  to the record this suite is anchored to, so it is asserted rather than assumed. -/
   heading : String
   probes : Array Probe
   /-- What a fix upstream lets us delete, from the section's own "would let us delete" sentence.
@@ -79,7 +81,8 @@ private def Defect.section (defect : Defect) : String :=
 fixture, not from the document's tables — the tables are prose and two of them had rotted. -/
 private def defects : Array Defect :=
   #[{ id := 1
-      heading := "## 1. `interpolatedStr.formatter` walks whatever node it is handed"
+      file := "01-interpolatedstr-walks-any-node.md"
+      heading := "1. `interpolatedStr.formatter` walks whatever node it is handed"
       expiry :=
         "nothing. §1 records that no protection was added and none should be — two always-on gates \
         contain it. But `NativeLayoutIslands.droppedTermArgument` in \
@@ -106,8 +109,8 @@ private def defects : Array Defect :=
           { label := "s1-trace-app", tag := "THREW" },
           { label := "s1-trace-interpolated", tag := "THREW" }] },
     { id := 2
-      heading :=
-        "## 2. `parserOfStack.formatter` reads one slot short — and `conv` is the loud case"
+      file := "02-parserofstack-off-by-one.md"
+      heading := "2. `parserOfStack.formatter` reads one slot short — and `conv` is the loud case"
       expiry :=
         "no explicit deletion is recorded. Dynamic quotations are protected as exact islands \
         (`dynamicQuotationKind` in LeanFmt/Formatter/NativeLayout.lean) and a fix makes that \
@@ -125,7 +128,8 @@ private def defects : Array Defect :=
           { label := "s2-command", tag := "THREW" },
           { label := "s2-macro-conv", tag := "THREW" }] },
     { id := 3
-      heading := "## 3. A `%$` positional capture makes any quotation unformattable"
+      file := "03-positional-capture.md"
+      heading := "3. A `%$` positional capture makes any quotation unformattable"
       expiry :=
         "`tokenSlotCapture` in LeanFmt/Formatter/NativeLayout.lean, the `tokenCapture` and \
         `tokenCaptureInSplice` declarations in tests/fixtures/native-layout/Islands.lean, and \
@@ -142,11 +146,12 @@ private def defects : Array Defect :=
           { label := "s3-control-bare", control := true, tag := "OK", needle := "exact trivial" },
           -- Outside every quotation the backtrack does not escape: a surrounding combinator
           -- absorbs it and the whole tactic block is deleted instead. Same mechanism, and the
-          -- consequence §1 is singled out for. `docs/upstream-defects.md` said this row refuses;
-          -- it does not, and the section now records the correction.
+          -- consequence §1 is singled out for. `docs/upstream-defects/03-positional-capture.md`
+          -- said this row refuses; it does not, and the file now records the correction.
           { label := "s3-capture-bare", tag := "OK", absent := "trivial" }] },
     { id := 4
-      heading := "## 4. Two forgotten separators in `src/Lean/Parser/Syntax.lean`"
+      file := "04-forgotten-separators.md"
+      heading := "4. Two forgotten separators in `src/Lean/Parser/Syntax.lean`"
       expiry := "`collectForgottenSpaceRuns` in LeanFmt/Formatter/NativeLayout.lean."
       probes :=
         #[ -- §4a: `optKind` spells `":="` where every sibling spells `" := "`.
@@ -167,7 +172,8 @@ private def defects : Array Defect :=
           { label := "s4-sepby1", tag := "OK", needle := "sepBy1(\"a\"\"b\", \",\")" },
           { label := "s4-abbrev", tag := "OK", needle := ":= \"a\"\"b\"" }] },
     { id := 5
-      heading := "## 5. `sepByIndent.formatter` drops the antiquotation splice its own parser adds"
+      file := "05-sepbyindent-drops-splice.md"
+      heading := "5. `sepByIndent.formatter` drops the antiquotation splice its own parser adds"
       expiry :=
         "the `sepBy` clause of the antiquotation-splice island protection in \
         LeanFmt/Formatter/NativeLayout.lean. §5 records why the base test is the whole \
@@ -187,7 +193,8 @@ private def defects : Array Defect :=
           { label := "s5-control-many", control := true, tag := "OK" },
           { label := "s5-control-optional", control := true, tag := "OK" }] },
     { id := 6
-      heading := "## 6. `ctor` puts the newline after the docstring it should precede"
+      file := "06-ctor-docstring-newline.md"
+      heading := "6. `ctor` puts the newline after the docstring it should precede"
       expiry :=
         "`ctorDocComment?` and `collectCtorDocStarts` plus the matching offside constraint in \
         LeanFmt/Formatter/NativeLayout.lean, which elide the first of the two newlines and cancel \
@@ -205,8 +212,8 @@ private def defects : Array Defect :=
           -- dedent then puts the continuation at column zero.
           { label := "s6-narrow", tag := "OK", needle := "/--\\nthe doc -/" }] },
     { id := 7
-      heading :=
-        "## 7. `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has"
+      file := "07-guardmsgs-missing-dedent.md"
+      heading := "7. `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has"
       expiry :=
         "the `dedented` boundary keyed on the live `command` category in \
         LeanFmt/Formatter/NativeLayout.lean — keyed on the category rather than on a list of the \
@@ -219,8 +226,8 @@ private def defects : Array Defect :=
           { label := "s7-control-set-option", control := true, tag := "OK",
             needle := "in\\nexample" }] },
     { id := 8
-      heading :=
-        "## 8. The category formatter's `nest` accumulates once per link of an operator chain"
+      file := "08-category-nest-accumulates.md"
+      heading := "8. The category formatter's `nest` accumulates once per link of an operator chain"
       expiry :=
         "`LAY-CHAIN-COMPENSATION` in LeanFmt/Formatter/NativeLayout.lean, \
         tests/fixtures/native-layout/Chains.lean and its assertions in \
@@ -234,7 +241,8 @@ private def defects : Array Defect :=
           { label := "s8-control-short-chain", control := true, tag := "WITHIN" },
           { label := "s8-long-chain", tag := "OVERRUN" }] },
     { id := 9
-      heading := "## 9. Four toolchain parsers declare a node kind that names no constant"
+      file := "09-rooted-node-kind.md"
+      heading := "9. Four toolchain parsers declare a node kind that names no constant"
       expiry :=
         "`rootedKind?` and `formatCommandForKind` in LeanFmt/Formatter/NativeLayout.lean, \
         tests/fixtures/native-layout/RootedKind.lean and its assertions in \
@@ -293,9 +301,9 @@ private def testDefect (ctx : Ctx) (defect : Defect) : IO Unit := do
     unless probe.control do
       verify ctx defect probe
 
-/-- The suite is anchored to `docs/upstream-defects.md` at one end and to the fixture at the other,
-so both anchors are asserted. A renumbered or retitled section is a one-line fix here; a *new*
-section is a decision about whether it gets a probe, and the count is what forces it to be made. A
+/-- The suite is anchored to `docs/upstream-defects/` at one end and to the fixture at the other,
+so both anchors are asserted. A renumbered or retitled defect is a one-line fix here; a *new* file
+is a decision about whether it gets a probe, and the count is what forces it to be made. A
 row added to the fixture and not claimed here would simply never be asserted, which is the quiet
 failure this whole suite exists to rule out. -/
 private def testRecordMatchesSuite (ctx : Ctx) : IO Unit := do
@@ -304,26 +312,28 @@ private def testRecordMatchesSuite (ctx : Ctx) : IO Unit := do
     ensure (claimed.contains label)
         s!"{fixture} prints a row labelled {repr label} that no section here claims, so nothing \
       asserts it. Add it to the section it belongs to, or delete the row."
-  let doc ← IO.FS.readFile (ctx.root / "docs" / "upstream-defects.md")
-  let lines := doc.splitOn "\n"
+  let dir := ctx.root / "docs" / "upstream-defects"
   for defect in defects do
-    ensure (defect.heading.startsWith s!"## {defect.id}. ")
+    ensure (defect.heading.startsWith s!"{defect.id}. ")
         s!"{defect.section}'s heading in this suite does not begin with its own number: \
       {defect.heading}"
-    ensure (lines.contains defect.heading)
-        s!"docs/upstream-defects.md no longer carries this heading verbatim:\n  \
-      {defect.heading}\nIf the section was only retitled, copy the new heading here. If it was \
+    let path := dir / defect.file
+    ensure (← path.pathExists)
+        s!"docs/upstream-defects/{defect.file} does not exist. {defect.section}'s probes are \
+      pointed at a record that is not there."
+    let lines := (← IO.FS.readFile path).splitOn "\n"
+    ensure (lines.contains ("# " ++ defect.heading))
+        s!"docs/upstream-defects/{defect.file} no longer carries this heading verbatim:\n  \
+      # {defect.heading}\nIf the defect was only retitled, copy the new heading here. If it was \
       renumbered or removed, {defect.section}'s probes are pointed at the wrong record."
   let numbered :=
-    lines.filter fun line =>
-      line.startsWith "## " &&
-        match (line.toList.drop 3).head? with
-        | some character => character.isDigit
-        | none => false
+    (← dir.readDir).filter fun entry =>
+      let name := entry.fileName
+      name.endsWith ".md" && name.length > 3 && (name.toList.take 2).all Char.isDigit
   ensureEq
-      "docs/upstream-defects.md gained or lost a numbered section; decide whether it needs a probe \
+      "docs/upstream-defects/ gained or lost a numbered file; decide whether it needs a probe \
     here, then update this count"
-      12 numbered.length
+      12 numbered.size
 
 private def cases (ctx : Ctx) : Array Case :=
   (defects.map fun defect => { name := s!"s{defect.id}", run := testDefect ctx defect }).push

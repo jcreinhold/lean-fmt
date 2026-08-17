@@ -83,7 +83,7 @@ Match the checks to the change:
   staged. Re-run it with a clean index.
 - `upstream-defects` is the only suite whose failure is good news. It runs
   `tests/fixtures/upstream-defects/Probe.lean` and asserts that each defect §§1–9 of
-  `docs/upstream-defects.md` records **still reproduces**; going red means Lean fixed something this project
+  `docs/upstream-defects/` records **still reproduces**; going red means Lean fixed something this project
   compensates for, and the message names the mechanism to delete. It is what separates that from "upstream broke us"
   when the `next-toolchain` probe goes red. Do not silence a failure by relaxing the expectation — do the deletion, or
   write down why the defect is still being paid for.

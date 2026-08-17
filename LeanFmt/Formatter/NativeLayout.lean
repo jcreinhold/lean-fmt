@@ -2240,7 +2240,7 @@ Rendered, that is a docstring glued to the `where` above it, a blank line, then 
 at a width narrow enough to break the docstring's own group, a continuation line at column zero.
 
 It still reparses onto the same constructor: five shapes at widths 100, 20 and 8 all round-trip
-`structEq` (2026-08-13, `docs/upstream-defects.md` §6). What changes is the docstring's text, not its
+`structEq` (2026-08-13, `docs/upstream-defects/06-ctor-docstring-newline.md`). What changes is the docstring's text, not its
 owner. This collector is here for the layout, which is reason enough — a formatter that moves a
 docstring's indentation has changed the file.
 

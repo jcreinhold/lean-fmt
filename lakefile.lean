@@ -292,7 +292,7 @@ lean_exe «suite-syntax» where
   root := `Suites.Syntax
   supportInterpreter := true
 
-/- The upstream-defect expiry suite: asserts that each toolchain defect `docs/upstream-defects.md`
+/- The upstream-defect expiry suite: asserts that each toolchain defect `docs/upstream-defects/`
 records still reproduces, so a fix upstream turns red rather than leaving a compensation mechanism
 dead and indistinguishable from a live one. Runs `lake env lean` over one fixture; workspace lane. -/
 lean_exe «suite-upstream-defects» where

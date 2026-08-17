@@ -51,7 +51,7 @@ The automation deliberately stops short of four things, because each needs a jud
   procedure. Nothing starts this work automatically.
 - **Accepting a corpus change.** A drop in `verbatim_commands` matched by a rise in `rejected` has moved defects rather
   than fixed them. Only `rejected` and `infrastructure_failures` are gated; the rest is reported for a person to read.
-- **Whether an upstream change is a defect to report or a contract to adopt.** `docs/upstream-defects.md` holds twelve
+- **Whether an upstream change is a defect to report or a contract to adopt.** `docs/upstream-defects/` holds twelve
   reproductions that are the material for that decision, and the `upstream-defects` suite asserts that each one still
   reproduces. A red `upstream-defects` is the good kind of red: it means Lean fixed something this project pays for,
   and the failure message names the mechanism to delete. It is also the one signal that separates that case from
@@ -81,8 +81,8 @@ disagreement and its resolution get written down rather than quietly settled.
 
 - `AGENTS.md` — the product constraints, the build and check commands, and which record wins.
 - `docs/toolchain-upgrade.md` — the bump checklist, addressed to whoever is doing one.
-- `docs/upstream-defects.md` — twelve toolchain-only reproductions, each recording what a fix upstream would let us
-  delete.
+- `docs/upstream-defects/` — twelve toolchain-only reproductions, one file per defect, each recording what a fix
+  upstream would let us delete.
 - `docs/flaky-tests.md` — read before re-running an intermittent failure; a retry on an unlogged signature trades a bug
   report for a coin flip.
 - `CHANGELOG.md` — one section per toolchain, written for users.

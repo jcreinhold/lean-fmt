@@ -44,7 +44,7 @@ ninth and it goes in this list.
 - Ordinary upstream bugs, each repaired against the mechanism rather than the parser: `def ctor` puts the newline inside
   the `"\n| "` atom *after* `optional docComment`, so a constructor docstring renders as `where/-- doc -/` followed by a
   blank line, and at a narrow width its continuation lands at column zero (it still reparses onto the same constructor —
-  measured, see `docs/upstream-defects.md` §6); `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
+  measured, see `docs/upstream-defects/06-ctor-docstring-newline.md`); `parserOfStack.formatter` reads one stack slot short of the `ident`, so `` `(cat| body) `` dies
   as ``Unknown constant «|»``; `guardMsgsCmd` omits the `ppDedent` every other command-embedding parser has;
   `tokenWithAntiquot.formatter` answers a `tok%$x` capture with `visitArgs`, which runs the *token* formatter on the
   node's last child — the antiquotation expression — so every atom in the grammar can carry a backtrack, quotation or
