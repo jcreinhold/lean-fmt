@@ -3,16 +3,15 @@ import VersoManual
 open Verso.Genre Manual
 open Verso.Genre.Manual.InlineLean
 
-#doc (Manual) "lean-fmt — Lean 4 Formatter and Linter" =>
+#doc (Manual) "lean-fmt" =>
 %%%
 tag := "top"
 shortTitle := "lean-fmt"
+authorshipNote := some "Lean 4 formatter and linter"
 %%%
 
-*Audience: anyone running lean-fmt.*
-
-lean-fmt is a code formatter and linter for Lean 4. It formats Lean source into one canonical
-style and adds static-analysis rules for common source-level problems.
+lean-fmt formats Lean source into one canonical style and adds static-analysis rules for common
+source-level problems.
 
 Every Lean example in this manual is compiled as the page is built. An example that stopped being
 valid Lean would break the build rather than sit here quietly being wrong.

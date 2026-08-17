@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Inject search metadata into the rendered Verso manual and write a sitemap.
+"""Prepare the rendered Verso manual for publication.
 
 Verso emits no meta description, no canonical link, and no sitemap, and its RenderConfig has no
 head-injection hook, so the Pages workflow runs this between `lake exe docs` and the artifact
-upload. The canonical host is jcreinhold.github.io: the apex domain 301s there permanently and
-serves nothing itself. A canonical link cannot be relative, so this host is hardcoded here —
-a host change means editing this file. No robots.txt is generated: crawlers read it only from the
-host root, which belongs to the user-site repository, not this one.
+upload. It also makes two single-page corrections Verso offers no knob for: it rewrites the
+`<title>` to carry the search-facing descriptor (the on-page title is plain `lean-fmt` with a
+subtitle note), and it strips the root page's end-of-part "Contents" section, which exists to
+link to child pages this manual does not have. The canonical host is jcreinhold.github.io: the
+apex domain 301s there permanently and serves nothing itself. A canonical link cannot be relative,
+so this host is hardcoded here — a host change means editing this file. No robots.txt is
+generated: crawlers read it only from the host root, which belongs to the user-site repository,
+not this one.
 """
 
 import pathlib
+import re
 import sys
 
 BASE = "https://jcreinhold.github.io/lean-fmt/"
@@ -20,6 +25,14 @@ DESCRIPTION = (
 # Verso's own UI pages, not content: the cross-reference lookup and the search page. They stay
 # untagged and out of the sitemap.
 NON_CONTENT = {"find", "search"}
+
+# The visible title is plain `lean-fmt` with the descriptor as a subtitle note; the `<title>` tag
+# keeps the full form because it is what search engines index.
+TITLE = "lean-fmt: Lean 4 Formatter and Linter"
+
+# The root page's end-of-part "Contents" section links to child pages. A single-page manual has
+# none; the sidebar already carries the section links.
+CONTENTS_SECTION = re.compile(r"<section>\s*<h2>Contents</h2>.*?</section>", re.S)
 
 
 def main() -> None:
@@ -35,6 +48,9 @@ def main() -> None:
         url = BASE if page.parent == root else f"{BASE}{page.parent.name}/"
         urls.append(url)
         html = page.read_text(encoding="utf-8")
+        if page.parent == root:
+            html = CONTENTS_SECTION.sub("", html)
+            html = html.replace("<title>lean-fmt</title>", f"<title>{TITLE}</title>", 1)
         if 'name="description"' in html:
             continue
         anchor = '<meta charset="utf-8">'
