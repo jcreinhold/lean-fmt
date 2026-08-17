@@ -34,4 +34,30 @@ of singletons.
 `Mathlib/Tactic/Have.lean` was the useful one to start on, because the standalone scanner formatted all 15 of its
 commands without complaint while `lean-fmt` degraded 3 — so whatever failed there was on our side of the boundary. It
 was: §5. Establishing which side owns a failure is still the first thing to do for any of the residue, and the scanner
-is still how to do it (see [the index](README.md#how-these-are-pinned)).
+is still how to do it: parse the file command by command with `Parser.parseHeader` and `Parser.parseCommand` and call
+`formatCommand` on each. That is also how the families in §§1–9 were found. The scanner's failures are neither a
+subset nor a superset of `lean-fmt`'s degradations: `lean-fmt` builds its own document rather than calling
+`formatCommand`, so it survives some commands the scanner refuses (dynamic quotations, which it protects as exact
+islands) and refuses some the scanner survives.
+
+## The corpus runs
+
+All figures above come from three whole-project runs over mathlib4 at `4a9d59a1cc`, all cold-cache
+(`format --check --no-cache --root .`).
+
+The first two, on 2026-08-13, bracket §3's and §5's repairs: `verbatim_commands` 421 → 334 and
+`uncaught backtrack exception` 239 → 149, with `rejected` 1, `broken` 0 and `infrastructure_failures` 0 in both.
+Where a defect file says "of the 421", it is quoting the first run. A fall in refusals matched by a rise in
+`rejected` or `infrastructure_failures` would have been a move, not a fix; both stayed put.
+
+The third, on 2026-08-14 on the released 0.7.1 binary, carries §10's repair: `files` 8862, `changed` 8533,
+`rejected` **0**, `verbatim_commands` 334, `findings` 3707, with `broken`, `unbuilt`, `validation_bypassed` and
+`infrastructure_failures` all 0. Per-file statuses are `clean` (329) and `would-format` (8533) and nothing else. It
+is what turns §10's "nothing now" from one file checked into a corpus with no refusal left in it, and the refusal
+was removed rather than relocated: `verbatim_commands` held at 334, and the two counts that would have absorbed a
+moved defect stayed at zero.
+
+That run's 334 degradations divide by the gate that refused them: 181 the layout, 71 formatting the result a second
+time, 49 the compiler's messages, 14 the comments, 13 the code's structure, 6 the tokens. This is a different cut
+from the table above, which counts only the `uncaught backtrack exception` subset and totals 149; how the two
+decompositions line up was not established, and guessing a correspondence from the totals would be inventing one.
