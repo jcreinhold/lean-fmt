@@ -12,8 +12,8 @@ def foo (x : Nat) : Nat :=
   x + 1
 ```
 
-Every result is re-parsed and compared token-for-token against the original. A file that does not match is refused,
-never written half-formatted.
+It will not break your code. If lean-fmt cannot prove the formatted output is the same program, it leaves the file
+alone.
 
 ## Install
 
