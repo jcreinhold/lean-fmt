@@ -239,7 +239,9 @@ private def testArchiveInstallation (ctx : Ctx) : IO Unit := do
   let check ←
     runProc (archive / ".lake" / "build" / "bin" / "lean-fmt").toString #["check", "--root", "."]
         (cwd? := some archive) (timeoutMs := some 1800000)
-  ensureEq "the archive's own binary did not run clean against the archive" 0 check.exitCode
+  ensure (check.exitCode == 0)
+      s!"the archive's own binary did not run clean against the archive: exit {check.exitCode}\n\
+    stdout:\n{check.stdout}\nstderr:\n{check.stderr}"
 
 end Ci
 
