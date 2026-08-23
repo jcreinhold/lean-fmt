@@ -8,6 +8,26 @@ notes are on the [releases page](https://github.com/jcreinhold/lean-fmt/releases
 Releases are named for the Lean toolchain they serve. Releases through 0.7.1 used semantic versions and a compatibility
 table; 0.7.1 is the last of those and serves Lean `v4.34.0-rc1`.
 
+## 4.34.0-rc2 — 2026-08-23
+
+### Upgrading
+
+This release serves Lean `v4.34.0-rc2`. Move your `lean-toolchain` to `leanprover/lean4:v4.34.0-rc2` and re-point the
+dependency at the matching tag:
+
+```lean
+require «lean-fmt» from git
+  "https://github.com/jcreinhold/lean-fmt" @ "v4.34.0-rc2"
+```
+
+Then `lake update «lean-fmt»`. Cached results from the rc1 build are not carried over — cache identity includes the
+toolchain — so the first run after the move pays full cost, once.
+
+### Changed
+
+- Canonical output is byte-identical to the rc1 build: the vendored `Std.Format` machine did not drift between rc1 and
+  rc2, and the formatter rewrites the same files. No reformat commit comes with this upgrade.
+
 ## 4.34.0-rc1 — 2026-08-14
 
 ### Upgrading
