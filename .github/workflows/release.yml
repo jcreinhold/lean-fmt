@@ -11,9 +11,11 @@
 # `v4.34.0` on a tree still pinned to an rc and every consumer inherits the mismatch, with no error
 # until something strange happens deep in their build.
 #
-# The four-platform gate survives the binaries it used to build. Consumers now compile lean-fmt
+# The three-platform gate survives the binaries it used to build. Consumers now compile lean-fmt
 # themselves, so a platform-shaped failure lands on them at build time rather than on a tarball
-# here; running the suites on each platform is what keeps that from being their discovery.
+# here; running the suites on each platform is what keeps that from being their discovery. Intel
+# Macs are not gated: Apple stopped selling them years ago, and the leg was the slowest of the
+# four by a wide margin.
 #
 # Triggered two ways: pushing a `v*` tag, or manual dispatch with an existing tag name.
 
@@ -36,7 +38,7 @@ env:
 
 jobs:
   # Fast, and first: a mismatch here invalidates every leg below, so spend a runner-second on it
-  # before spending four full test runs.
+  # before spending three full test runs.
   verify-tag:
     runs-on: ubuntu-latest
     steps:
@@ -67,7 +69,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-15-intel, macos-14]
+        os: [ubuntu-22.04, ubuntu-22.04-arm, macos-14]
     runs-on: ${{ matrix.os }}
 
     steps:

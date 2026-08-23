@@ -12,9 +12,9 @@ that job.
 
 **Nothing is packaged or uploaded.** There are no prebuilt binaries and no `install.sh`. lean-fmt is a Lake dependency
 built from source against the consumer's own compiler — which is what the plugin and the cache facet require anyway,
-since a plugin is a shared library loaded into that compiler. Pushing the tag fires a full `lake test` gate on four
+since a plugin is a shared library loaded into that compiler. Pushing the tag fires a full `lake test` gate on three
 platform legs and then creates a GitHub Release carrying notes and nothing else. NEVER build and distribute a binary
-locally; a build that skips the four-leg gate is not a release.
+locally; a build that skips the three-leg gate is not a release.
 
 A botched tag is not permanent, but a tag that consumers and Lake manifests already pin is costly to move. Treat the tag
 push as irreversible.
@@ -37,7 +37,7 @@ lake build && lake lint && lake test
 ```
 
 Run `lake test -- --all` if the candidate touches a slow suite's ground. The release workflow runs `lake test` on all
-four legs, so a failure you skipped locally costs a tag.
+three legs, so a failure you skipped locally costs a tag.
 
 ### 2. Version — three places, all must agree
 

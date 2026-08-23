@@ -37,7 +37,7 @@ work.
 | weekly | the flake-hunt: the default suite set twice, plus every slow suite | an intermittent failure nobody exercises is one everybody ships |
 | monthly | `corpus` runs lean-fmt over all of mathlib4 | counts published to the run summary, per-file JSON uploaded, `rejected` and `infrastructure_failures` gated at zero |
 | every push and PR | the sharded suite matrix | the 40 suites, one of which asserts every recorded upstream defect still reproduces |
-| on a `v*` tag | `verify-tag`, then the full gate on four platforms | a Release page; nothing is packaged |
+| on a `v*` tag | `verify-tag`, then the full gate on three platforms | a Release page; nothing is packaged |
 
 A bump that builds and moves no canonical bytes has nothing left to decide, so it arrives as a reviewable pull request
 rather than a note in a summary somebody reads next month. Most Lean releases are that kind.
