@@ -54,3 +54,4 @@ __pycache__/
 PLAN.md
 .pi-subagents/
 .pi/sessions/
+.pi/tasks/
