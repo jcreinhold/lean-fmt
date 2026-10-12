@@ -19,7 +19,6 @@ import all LeanFmt.Validator
 
 import Lean.Elab.Frontend
 import Lean.Linter.Deprecated
-import Lean.Server.InfoUtils
 import Std.Sync.Mutex
 
 /-! The exact frontend: run Lean over a module and keep what only Lean can produce.
