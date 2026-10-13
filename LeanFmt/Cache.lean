@@ -106,7 +106,8 @@ the analysis it describes, and that disagreement is a stale hit. One source of t
 def providedOf (analysis : SemanticAnalysis) : Cache.Decision.Provided :=
   match analysis.result? with
   | none => .broken
-  | some result => .success result.tier result.caps result.canonical?.isSome
+  | some result =>
+    .success result.tier result.caps result.canonical?.isSome result.definingModules?.isSome
 
 private structure CacheIndex where
   schema : String
@@ -172,7 +173,7 @@ structure ResultCache where private mk ::
   closureNodeDigests : IO.Ref (Std.HashMap Lean.Name (Option Digest))
 
 def resultCacheSchema : String :=
-  "lean-fmt.result-cache.v5"
+  "lean-fmt.result-cache.v6"
 
 private def digestParts (parts : Array String) : Digest :=
   Digest.ofString (String.intercalate "\u0000" parts.toList)
@@ -1064,6 +1065,12 @@ private def ResultCache.lookupAll (cache : ResultCache) (project : Project.Snaps
       catch _ =>
         return none
 
+/-- Interface-only closure identity cannot certify declaration-use evidence. It still
+serves the other findings whose weaker cache contract the user selected. -/
+private def useEvidenceForClosure (mode : ClosureMode) (analysis : SemanticAnalysis) :
+    SemanticAnalysis :=
+  if mode == .interface then analysis.withDefiningModules none else analysis
+
 def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
     (targets : Array Project.SourceTarget) : IO (Array (Option SemanticAnalysis)) :=
   -- Currency is `Cache.Decision.Entry.identityCurrent`, the function
@@ -1071,7 +1078,11 @@ def ResultCache.readAll (cache : ResultCache) (project : Project.Snapshot)
   -- `Decision.serves` — `Provided.meets` — runs in `LeanFmt.Application`, which is where the
   -- rule plan is known.
   cache.lookupAll project targets fun entry obs =>
-    if entry.identityCurrent obs then some entry.analysis else none
+    if entry.identityCurrent obs then
+      -- Interface-only identity omits proof bodies and some extension effects. It cannot
+      -- certify the defining-module set: other cached findings remain usable.
+      some (useEvidenceForClosure cache.closureMode entry.analysis)
+    else none
 
 /-- The organize verdict probe: for each candidate target, the stored verdict about those bytes,
 paired with the analysis that recorded it (a rejection's diagnostics are its report).
@@ -1139,12 +1150,28 @@ private def mergeAnalysis (old new : SemanticAnalysis) : SemanticAnalysis :=
   | none, none => new
   | some oldResult, some newResult =>
     let canonical? := newResult.canonical?.or oldResult.canonical?
+    -- These records share one source/configuration/artifact-closure key. Keep a positively
+    -- captured use set when a later syntax-only run did not recapture it.
+    let definingModules? := newResult.definingModules?.or oldResult.definingModules?
     if newResult.tier.satisfies oldResult.tier && oldResult.caps.subset newResult.caps then
-      { new with result? := some { newResult with canonical? } }
+      { new with
+        result? :=
+          some
+            { newResult with
+              canonical?, definingModules? } }
     else
       if oldResult.tier.satisfies newResult.tier && newResult.caps.subset oldResult.caps then
-        { old with result? := some { oldResult with canonical? } }
-      else { new with result? := some { newResult with canonical? } }
+        { old with
+          result? :=
+            some
+              { oldResult with
+                canonical?, definingModules? } }
+      else
+        { new with
+          result? :=
+            some
+              { newResult with
+                canonical?, definingModules? } }
 
 /-- The identity keys a full-project run can still serve: every current target's own key, and
 the key of each target's organize candidate — a stored rejection verdict has a consumer exactly
@@ -1198,8 +1225,17 @@ def ResultCache.writeAll (cache : ResultCache) (project : Project.Snapshot)
       -- bytes this run did not recompute (monotone writes — see `mergeAnalysis`).
       let analysis :=
         match entries.get? (toString digest) with
-        | some old => mergeAnalysis old.analysis analysis
+        | some old =>
+          -- A key lookup alone cannot certify the use set being grafted. Apply the same
+          -- integrity and currency checks as lookupAll before retaining any old evidence.
+          if
+              old.identity == digest && old.payload == analysisDigest old.analysis &&
+                validAnalysis target old.analysis &&
+                (entryDecision old).identityCurrent (observation target closure) then
+            mergeAnalysis old.analysis analysis
+          else analysis
         | none => analysis
+      let analysis := useEvidenceForClosure cache.closureMode analysis
       let entry : CacheEntry :=
         { schema := resultCacheSchema
           identity := digest

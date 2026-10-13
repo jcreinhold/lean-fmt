@@ -840,6 +840,7 @@ private def canonicalAnalysis (snapshot : SourceSnapshot) (renderCanonical : Boo
     SemanticAnalysis.ofArtifact snapshot.source snapshot.config.format.lineWidth analysis.artifact?
       analysis.diagnostics with
   | .ok semantic =>
+    let semantic := semantic.withDefiningModules analysis.definingModules?
     if semantic.result?.isNone then
       return semantic
     if renderCanonical then
@@ -933,9 +934,9 @@ running. The clauses are documented on `Provided.meets` itself, next to the defi
 The other half, `Entry.identityCurrent`, runs in `LeanFmt.Cache`, which is where digests can be
 observed. `Cache.Decision.serves` is their conjunction and is the whole cache decision. -/
 private def analysisServes (requiredTier : Tier) (demandedCaps : SemanticCaps)
-    (renderCanonical : Bool) (analysis : SemanticAnalysis) : Bool :=
+    (renderCanonical : Bool) (analysis : SemanticAnalysis) (definingUses : Bool := false) : Bool :=
   (providedOf analysis).meets
-    { tier := requiredTier, caps := demandedCaps, renderCanonical := renderCanonical }
+    { tier := requiredTier, caps := demandedCaps, renderCanonical := renderCanonical, definingUses }
 
 private def availableAnalysis (plan : RulePlan) (renderCanonical applies : Bool)
     (evidence : Project.ModuleEvidence) (snapshot : SourceSnapshot)
@@ -1181,7 +1182,7 @@ private structure PreparedFile where
   withheldUnsafe : Nat
   /-- How many config-selected findings a source directive suppressed. -/
   suppressed : Nat
-  /-- FMT004 candidates withheld by exposure-changing modifiers (see `FileReport.withheldRedundant`). -/
+  /-- FMT004 candidates withheld by exposure-changing modifiers or positive defining uses (see `FileReport.withheldRedundant`). -/
   withheldRedundant : Nat
 
 /-- The formatted text in the file's own line-ending form, i.e. what a write would produce. -/
@@ -1356,7 +1357,7 @@ effective applicability, already resolved by `plan.findings`), but only the *adm
 the patch: a non-admitted fix is stripped to `none` before `preparePatch`, which then only ever
 assembles edits that will actually be published. Admission is `Applicability.admitted unsafeFixes`,
 the one rule `fix` and its `check` preview share, so a preview shows what a write would do. -/
-private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
+private def prepareFileCore (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
     (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
     (analysis : SemanticAnalysis) : Except FileReport PreparedFile := do
   let some result := analysis.result? |
@@ -1411,6 +1412,27 @@ private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
       | none => total
   return { findings, normalized, lineEndings, patch, withheldUnsafe, suppressed, withheldRedundant }
 
+/-- Classify graph candidates against the original header and exact declaration-use evidence.
+Every mode shares this operation. Missing evidence produces a visible failure and no write. -/
+private def prepareFile (plan : RulePlan) (renderCanonical unsafeFixes : Bool)
+    (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
+    (analysis : SemanticAnalysis) : IO (Except FileReport PreparedFile) := do
+  if reportImports.any (·.code == "FMT004") && analysis.result?.isSome then
+    let normalized := (LosslessSource.normalize snapshot.source).1
+    let some header ←
+      Imports.parseHeaderModel
+          normalized | throw <| IO.userError "FMT004 could not parse the original import header"
+    match
+      Imports.classifyDefiningUses header reportImports
+        (analysis.result?.bind (·.definingModules?)) with
+    | .error reason =>
+      throw <| IO.userError reason
+    | .ok (findings, protectedCount) =>
+      return prepareFileCore plan renderCanonical unsafeFixes findings
+          (withheldRedundant + protectedCount) snapshot analysis
+  return prepareFileCore plan renderCanonical unsafeFixes reportImports withheldRedundant snapshot
+      analysis
+
 private inductive PreviewMode where
   | check
   | format
@@ -1431,8 +1453,9 @@ private def previewFile (mode : PreviewMode) (plan : RulePlan) (unsafeFixes : Bo
     (reportImports : Array Finding) (withheldRedundant : Nat) (snapshot : SourceSnapshot)
     (analysis : SemanticAnalysis) : IO FileReport := do
   match
-    prepareFile plan mode.rendersCanonical unsafeFixes reportImports withheldRedundant snapshot
-      analysis with
+    ←
+      prepareFile plan mode.rendersCanonical unsafeFixes reportImports withheldRedundant snapshot
+          analysis with
   | .error report =>
     return report
   | .ok prepared =>
@@ -1468,8 +1491,9 @@ private def fixFile (run : ExactRun) (plan : RulePlan) (unsafeFixes : Bool)
   -- bytes and applies the admitted fixes from `selected` — FMT003 among them — at original
   -- coordinates. No reflow, no canonical recomputation.
   match
-    prepareFile plan (renderCanonical := false) unsafeFixes reportImports withheldRedundant snapshot
-      analysis with
+    ←
+      prepareFile plan (renderCanonical := false) unsafeFixes reportImports withheldRedundant
+          snapshot analysis with
   | .error report =>
     return report
   | .ok prepared =>
@@ -1527,8 +1551,9 @@ private def formatFile (plan : RulePlan) (unsafeFixes : Bool) (reportImports : A
     | some canonical => if canonical.validation.bypassed then 1 else 0
     | none => 0
   match
-    prepareFile plan (renderCanonical := true) unsafeFixes reportImports withheldRedundant snapshot
-      analysis with
+    ←
+      prepareFile plan (renderCanonical := true) unsafeFixes reportImports withheldRedundant
+          snapshot analysis with
   | .error report =>
     return report
   | .ok prepared =>
@@ -1792,6 +1817,7 @@ serial loop's `catch` reported. -/
 private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (renderCanonical : Bool)
     (demanded : Tier) (demandedCaps : SemanticCaps) (target : TargetWork) : IO FileOutcome := do
   let { snapshot, available?, importReport := ir, plan, compiled } := target
+  let needsDefiningUses := ir.1.any (·.code == "FMT004")
   try
     -- Anything left unanswered elaborates its source. There used to be a branch here that loaded the
     -- module's `.olean` and rendered from the artifact instead; it was deleted when the candidate
@@ -1807,8 +1833,8 @@ private def processOneTarget (exactRun : ExactRun) (request : RunRequest) (rende
         pure analysis
       | none =>
         exactRun.analyzeSnapshot snapshot renderCanonical (captureSemantic := demanded == .semantic)
-            (captureOccurrences := demandedCaps.occurrences) (compiled := compiled)
-            (validationPolicy := request.validationPolicy)
+            (captureOccurrences := demandedCaps.occurrences) (compiled :=
+            compiled && !needsDefiningUses) (validationPolicy := request.validationPolicy)
     let report ←
       withPhase "rules" <|
           match request.mode with
@@ -1979,8 +2005,10 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- whether a stored result answers it, never the batch union.
   let indexHits := cached.foldl (init := 0) fun n c? => if c?.isSome then n + 1 else n
   let cached :=
-    (cached.zip plans).map fun (cached?, plan) =>
-      cached?.filter (analysisServes plan.requiredTier (plan.demandedCaps applies) renderCanonical)
+    ((cached.zip plans).zip importReports).map fun ((cached?, plan), ir) =>
+      cached?.filter
+        (analysisServes plan.requiredTier (plan.demandedCaps applies) renderCanonical
+          (definingUses := ir.1.any (·.code == "FMT004")))
   -- `index_hits` counts entries the index answered with; `served` counts those that survived
   -- the tier/caps demotion above. They differ exactly when a stored result cannot answer this
   -- run's mode, so reporting both separates "the entry was invalidated" from "the entry was
@@ -2033,6 +2061,10 @@ def execute (request : RunRequest) : IO RunOutcome := do
     ((((snapshots.zip cached).zip evidence).zip artifacts).zip plans).mapM fun
         | ((((snapshot, cached?), sourceEvidence), artifact?), plan) =>
           availableAnalysis plan renderCanonical applies sourceEvidence snapshot cached? artifact?
+  let available :=
+    (available.zip importReports).map fun (analysis?, ir) =>
+      analysis?.filter
+        (analysisServes .source {} false (definingUses := ir.1.any (·.code == "FMT004")))
   if !request.writesFormat && available.all Option.isSome then
     if let some previewMode := request.mode.preview? then
       let analyses := available.filterMap id
@@ -2204,8 +2236,9 @@ def ExactRun.streamEnvelope (run : ExactRun) (target : Project.SourceTarget) (pl
   let (reportImports, withheldRedundant) ←
     singleImportReport plan project.workspace normalized target.config.format
   match
-    prepareFile plan renderCanonical unsafeFixes reportImports withheldRedundant target
-      analysis with
+    ←
+      prepareFile plan renderCanonical unsafeFixes reportImports withheldRedundant target
+          analysis with
   | .error report =>
     return {
         path := report.path

@@ -1188,11 +1188,10 @@ repeat imports nothing new, so removing it preserves the module's environment an
       lifecycle := .stable
       explanation :=
         "\
-An import is already pulled in by another import's transitive closure, so it adds nothing to the \
-module's environment. Report-only: whether the redundant line documents intent or should be removed is \
-author judgment, and deciding it needs the Lake module graph, not this file alone. Illustrative \
-(needs a multi-module project): importing both a module and a second module that already imports it \
-flags the redundant one."
+A plain import is covered by another import and has no positive defining-module use in the exact \
+frontend evidence. Direct uses in statements, proofs and definitions retain their defining import. \
+This is a report-only candidate, not a proof that removal is safe: syntax, tactics and command \
+effects may still require it. Missing use evidence requires exact analysis, never an empty use set."
       -- Example-exempt (see `exampleExemptCodes`): redundancy is a cross-module graph fact,
       -- not a self-contained single-file snippet.
       examples := #[] },
@@ -1288,14 +1287,16 @@ def isImportCode (code : String) : Bool :=
 **source**-level fact — so it projects onto `source`, the cheapest tier. The module graph FMT004
 also consults sits outside the `source ≤ syntax ≤ semantic` chain (`Imports`): it is a run-level
 input, not a deeper frontend tier, so it does not raise `input`. This is the one array
-`rules --json` prints, so an import rule is as visible and selectable as any other. -/
+`rules --json` prints, so an import rule is as visible and selectable as any other. FMT004 additionally requires exact
+frontend defining-use evidence for eligible candidates; it advertises that semantic demand. -/
 def allRulesJson : Array Lean.Json :=
   ruleRegistry.map Lean.toJson ++
     importRuleInfos.map fun info =>
       Lean.Json.mkObj
         [("code", .str info.code), ("category", .str info.category), ("summary", .str info.summary),
           ("fixable", .bool info.fixable), ("defaultEnabled", .bool info.defaultEnabled),
-          ("lifecycle", Lean.toJson info.lifecycle), ("input", .str "source")]
+          ("lifecycle", Lean.toJson info.lifecycle),
+          ("input", .str (if info.code == "FMT004" then "semantic" else "source"))]
 
 /-- The full metadata for one rule as JSON — every field, including `explanation` and
 `examples` — the object `explain --json` and the documentation generator both consume, so they can
@@ -1326,11 +1327,11 @@ def ruleInfoJson (info : RuleInfo) (tier : String) : Lean.Json :=
                   | none => .null)]))]
 
 /-- The `input`/tier wire string for a catalog code: the engine rule's derived tier if it
-is in `ruleRegistry`, else `source` (the import family and any non-engine identity). -/
+is in `ruleRegistry`; FMT004 requires defining-use evidence, and the other import rules read source. -/
 def tierWireOf (code : String) : String :=
   match ruleRegistry.find? (·.code == code) with
   | some rule => (Lean.toJson rule.tier).getStr?.toOption.getD "source"
-  | none => "source"
+  | none => if code == "FMT004" then "semantic" else "source"
 
 /-- Look up a live rule's identity by code (engine rules and the import family). -/
 def ruleInfoByCode? (code : String) : Option RuleInfo :=

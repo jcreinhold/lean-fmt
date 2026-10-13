@@ -50,6 +50,8 @@ structure Demand where
   tier : Tier
   caps : SemanticCaps
   renderCanonical : Bool
+  /-- Whether this run needs full-frontend defining-module use evidence. -/
+  definingUses : Bool := false
   deriving BEq
 
 /-! ## What an entry carries -/
@@ -60,7 +62,7 @@ structure Demand where
 that did not analyze did not analyze at some tier and fail to at another. -/
 inductive Provided where
   | broken
-  | success (tier : Tier) (caps : SemanticCaps) (hasCanonical : Bool)
+  | success (tier : Tier) (caps : SemanticCaps) (hasCanonical : Bool) (hasDefiningUses : Bool)
   deriving BEq
 
 /-- Does what the entry captured answer what the run asked?
@@ -69,12 +71,14 @@ A `.source` shortcut entry computed no syntax findings, so it cannot serve a run
 rule; without the tier clause, shipping the first syntax rule would let a source-only `check` turn a
 later `--select FMT008` into a stored false clean. The caps clause is separate: a `.semantic` entry
 serves only when it captured every sub-fact demanded, so a fixable-`FMT012` demand against an entry
-captured by a report-only check misses and recomputes rather than serving a false clean. -/
+captured by a report-only check misses and recomputes rather than serving a false clean.
+Defining-use evidence has its own application-only presence gate; it is never inferred from a tier. -/
 def Provided.meets (p : Provided) (d : Demand) : Bool :=
   match p with
   | .broken => true
-  | .success tier caps hasCanonical =>
-    (!d.renderCanonical || hasCanonical) && tier.satisfies d.tier && d.caps.subset caps
+  | .success tier caps hasCanonical hasDefiningUses =>
+    (!d.renderCanonical || hasCanonical) && tier.satisfies d.tier && d.caps.subset caps &&
+      (!d.definingUses || hasDefiningUses)
 
 /-! ## The world as the cache can see it -/
 

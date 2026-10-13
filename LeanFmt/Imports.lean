@@ -323,7 +323,8 @@ def redundancyEligible (header : HeaderModel) (stmt : ImportStmt) : Bool :=
 /-- FMT004: a plain written import that another written import already makes available is a
 redundancy candidate. `covers outer inner` answers whether importing `outer` brings `inner` with it;
 the caller owns what an unresolvable graph answers there. Report-only always — reachability is
-necessary, not sufficient, for safe removal. Duplicates are excluded (they are FMT003's). Returns
+necessary, not sufficient, for safe removal. Application classifies these candidates with exact
+defining-module use evidence before reporting. Duplicates are excluded (they are FMT003's). Returns
 the findings and the withheld count (candidates skipped by `redundancyEligible`). -/
 def redundantFindings (header : HeaderModel) (covers : Lean.Name → Lean.Name → Bool) :
     Array Finding × Nat :=
@@ -361,6 +362,33 @@ def redundantFindings (header : HeaderModel) (covers : Lean.Name → Lean.Name �
         else
           withheld := withheld + 1
     return (findings, withheld)
+
+/-- Retain a covered defining import when the full frontend records a direct use.
+Missing evidence refuses classification rather than claiming an empty use set. The raw graph
+candidates stay separate so source-only cache hits can request exactly the missing evidence. -/
+def classifyDefiningUses (header : HeaderModel) (findings : Array Finding)
+    (used? : Option (Array String)) : Except String (Array Finding × Nat) := do
+  if !findings.any (·.code == "FMT004") then
+    return (findings, 0)
+  let some used :=
+    used? | throw "FMT004 defining-module use evidence is unavailable; exact analysis is required"
+  let mut kept := #[]
+  let mut withheld := 0
+  for finding in findings do
+    if finding.code != "FMT004" then
+      kept := kept.push finding
+      continue
+    let some stmt :=
+      header.imports.find?
+        (fun stmt =>
+          stmt.range.start == finding.range.start &&
+            stmt.range.stop ==
+              finding.range.stop) | throw "FMT004 candidate does not match the original parsed import header"
+    if used.contains stmt.module.toString then
+      withheld := withheld + 1
+    else
+      kept := kept.push finding
+  return (kept, withheld)
 
 /-! ## The canonical layout (`import-layout = "canonical"`)
 

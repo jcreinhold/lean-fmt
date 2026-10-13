@@ -484,9 +484,11 @@ private def testRulesRegistry (ctx : Ctx) : IO Unit := do
   ensure (flag "FMT003" "fixable" && text "FMT003" "category" == "imports") "FMT003"
   for code in ["FMT004", "FMT005"] do
     ensure (!(flag code "fixable") && text code "category" == "imports") s!"{code} imports"
-  -- FMT001/002 and FMT003-005 are the default-enabled, source-tier rules.
-  for code in ["FMT001", "FMT002", "FMT003", "FMT004", "FMT005"] do
+  -- Security, duplicate and ordering rules inspect source; FMT004 needs exact use evidence.
+  for code in ["FMT001", "FMT002", "FMT003", "FMT005"] do
     ensure (flag code "defaultEnabled" && text code "input" == "source") s!"{code} source tier"
+  ensure (flag "FMT004" "defaultEnabled" && text "FMT004" "input" == "semantic")
+      "FMT004 defining-use evidence tier"
   -- FMT006-011 ship as preview: off by default, syntax tier, explicit --select only.
   for code in ["FMT006", "FMT007", "FMT008", "FMT009", "FMT010", "FMT011"] do
     ensure (!(flag code "defaultEnabled") && text code "input" == "syntax") s!"{code} preview"

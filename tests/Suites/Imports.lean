@@ -118,22 +118,10 @@ private def testOrdering (ctx : Ctx) : IO Unit := do
   for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
     ensure ((jsonAt? finding [.field "fix"]).isNone) "ordering: FMT005 carries a fix -- it must not"
 
-/-- FMT004 fires on what a dependent can actually see, and on nothing else.
-
-Both arms import `Demo.Base` alongside a module that imports it too. `Demo.Exported` re-exports it
-with `public import`, so dropping the direct import would change nothing and the candidate is real.
-`Demo.Private` does not, so `Base` is invisible through it and dropping the direct import would
-break the build.
-
-**The silent arm is the one that matters.** The rule asked Lake for `transImports`, which is the
-*build* closure and takes every import regardless of `public` — so it reported the private arm too.
-That is not a corner case: `tests/Test/Unit/Cases.lean` carried two `ignore[FMT004]` directives for
-exactly this, with a comment admitting the rule was over-approximating, and this repository's own
-tree could not be linted clean without them.
-
-Its own project, because the shape needs a `public import` and no module under `LeanFmt/` uses one —
-which is also why the old fixture (two repository modules, one transitively importing the other)
-asserted a false positive and passed. -/
+/-- Public coverage supplies a graph candidate, not an unused-import verdict. A consumer that
+uses Base directly retains its defining import; one that uses only the facade still reports
+the Base candidate. The private facade cannot cover Base. Warm-cache and source-edit cases
+exercise the exact use evidence through the production pipeline. -/
 private def testRedundant (ctx : Ctx) : IO Unit := do
   let project := ctx.work / "visibility"
   IO.FS.createDirAll (project / "Demo")
@@ -141,7 +129,9 @@ private def testRedundant (ctx : Ctx) : IO Unit := do
   writeFile (project / "lakefile.lean")
       "import Lake\n\nopen Lake DSL\n\npackage \"visibility\"\n\nlean_lib Demo where\n  \
      globs := #[.submodules `Demo]\n"
-  writeFile (project / "Demo" / "Base.lean") "module\n\npublic def base : Nat := 1\n"
+  writeFile (project / "Demo" / "Base.lean")
+      "module\n\npublic def base : Nat := 1\npublic def Carrier : Type := Nat\n\
+       public theorem base_zero : (0 : Nat) = 0 := rfl\n"
   -- The two covering modules differ in one keyword, and that keyword is the whole test.
   writeFile (project / "Demo" / "Exported.lean")
       "module\n\npublic import Demo.Base\n\npublic def exported : Nat := base\n"
@@ -151,17 +141,47 @@ private def testRedundant (ctx : Ctx) : IO Unit := do
       "module\n\nimport Demo.Base\nimport Demo.Exported\n\npublic def viaExported : Nat := base\n"
   writeFile (project / "Demo" / "ViaPrivate.lean")
       "module\n\nimport Demo.Base\nimport Demo.Private\n\npublic def viaPrivate : Nat := base\n"
+  writeFile (project / "Demo" / "ViaFacade.lean")
+      "module\n\nimport Demo.Base\nimport Demo.Exported\n\npublic def viaFacade : Nat := exported\n"
+  for (name, declaration) in
+    #[("ViaProof", "private theorem proofUse : (0 : Nat) = 0 := base_zero\n"),
+      ("ViaType", "private def typeUse (x : Carrier) : Carrier := x\n"),
+      ("ViaExample", "example : (0 : Nat) = 0 := by exact base_zero\n")] do
+    writeFile (project / "Demo" / s!"{name}.lean")
+        ("module\n\nimport Demo.Base\nimport Demo.Exported\n\n" ++ declaration)
   let select :=
     #["check", "--root", project.toString, "--json", "--no-cache", "--select", "imports"]
+  let direct ←
+    checkJson ctx 0 (select ++ #[(project / "Demo" / "ViaExported.lean").toString])
+        "direct-defining-use"
+  ensureEq "direct defining use was reported as redundant" ([] : List String)
+      (codesOf (← oneFile direct "direct-defining-use")).toList
+  ensureJsonAt direct [.field "withheldRedundant"] (Lean.toJson (1 : Nat)) "direct-defining-use"
+  for name in ["ViaProof", "ViaType", "ViaExample"] do
+    let checked ← checkJson ctx 0 (select ++ #[(project / "Demo" / s!"{name}.lean").toString]) name
+    ensureEq s!"{name}: defining use was not protected" ([] : List String)
+        (codesOf (← oneFile checked name)).toList
   let reported ←
-    checkJson ctx 1 (select ++ #[(project / "Demo" / "ViaExported.lean").toString])
-        "redundant-exported"
-  let file ← oneFile reported "redundant-exported"
-  ensureEq "redundant: a re-exported import was not reported" ["FMT004"] (codesOf file).toList
+    checkJson ctx 1 (select ++ #[(project / "Demo" / "ViaFacade.lean").toString]) "redundant-facade"
+  let file ← oneFile reported "redundant-facade"
+  ensureEq "facade body was expanded to manufacture a direct Base use" ["FMT004"]
+      (codesOf file).toList
   for finding in ((jsonAt? file [.field "findings"]).bind (·.getArr?.toOption)).getD #[] do
     ensure ((jsonAt? finding [.field "fix"]).isNone)
         "redundant: FMT004 carries a fix -- it must not"
-  ensureJsonAt reported [.field "withheldRedundant"] (Lean.toJson (0 : Nat)) "redundant-exported"
+  ensureJsonAt reported [.field "withheldRedundant"] (Lean.toJson (0 : Nat)) "redundant-facade"
+  let cachedSelect := select.filter (· != "--no-cache")
+  let path := (project / "Demo" / "ViaFacade.lean").toString
+  let cold ← checkJson ctx 1 (cachedSelect ++ #[path]) "facade cache cold"
+  let warm ← checkJson ctx 1 (cachedSelect ++ #[path]) "facade cache warm"
+  ensureEq "warm facade cache changed the findings"
+      (codesOf (← oneFile cold "facade cache cold")).toList
+      (codesOf (← oneFile warm "facade cache warm")).toList
+  writeFile (project / "Demo" / "ViaFacade.lean")
+      "module\n\nimport Demo.Base\nimport Demo.Exported\n\npublic def viaFacade : Nat := base\n"
+  let changed ← checkJson ctx 0 (cachedSelect ++ #[path]) "direct-use source changed"
+  ensureEq "source edit served stale direct-use classification" ([] : List String)
+      (codesOf (← oneFile changed "direct-use source changed")).toList
   let silent ←
     checkJson ctx 0 (select ++ #[(project / "Demo" / "ViaPrivate.lean").toString])
         "redundant-private"
