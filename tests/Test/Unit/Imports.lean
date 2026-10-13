@@ -126,6 +126,21 @@ private def testImports : IO Unit := do
       "a transitively-covered import did not fire FMT004"
   ensure (redFindings[0]!.fix?.isNone) "FMT004 must be report-only (no fix)"
   ensure (redWithheld == 0) "a plain covered import was wrongly withheld"
+  let .ok (usedFindings, protectedCount) :=
+    Imports.classifyDefiningUses redundant redFindings
+      (some #["Foo.B"]) | throw <| IO.userError "direct-use classification failed"
+  ensure (usedFindings.isEmpty && protectedCount == 1)
+      "a positively used defining import was reported as redundant"
+  let .ok (unusedFindings, unusedCount) :=
+    Imports.classifyDefiningUses redundant redFindings
+      (some #[]) | throw <| IO.userError "captured-empty classification failed"
+  ensure (unusedFindings.map (·.code) == redFindings.map (·.code) && unusedCount == 0)
+      "captured empty uses hid a genuine graph candidate"
+  ensure
+      (match Imports.classifyDefiningUses redundant redFindings none with
+      | .error _ => true
+      | .ok _ => false)
+      "unavailable use evidence was treated as a captured empty set"
   -- Withholding: `import all Foo.B` under a `module` marker exposes data reachability cannot reason
   -- about, so it is withheld (counted), never reported.
   let withheld ← parseHeader! "module\nimport Foo.A\nimport all Foo.B\n"

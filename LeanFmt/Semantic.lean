@@ -30,6 +30,8 @@ structure SemanticResult where
   source : Digest
   sourceBytes : Nat
   findings : Array Finding
+  /-- Captured positive declaration uses. `none` is unavailable, never an empty use set. -/
+  definingModules? : Option (Array String) := none
   /-- `none` when this result was produced without a projection to render — the source-only shortcut
   in `availableAnalysis` takes no artifact, so a `check` run caches an entry a later `format` cannot
   use. Such an entry is a miss for a rendering mode, not an answer — which is why this is an `Option`,
@@ -87,7 +89,7 @@ def unrepresentableProjection? (diagnostics : Array String) : Option String :=
 /-- The current cache shape stores the complete admitted `CanonicalLayout` with its source map and
 formatter/validation metrics. The version is part of cache identity; older result shapes miss. -/
 def semanticResultSchema : String :=
-  "lean-fmt.semantic-result.v14"
+  "lean-fmt.semantic-result.v15"
 
 /-- `normalized` must be `(LosslessSource.normalize raw).1`, the string every finding indexes.
 `suppression` defaults empty for the source-only shortcut; `ofArtifact?` passes the collected facts.
@@ -120,6 +122,12 @@ def SemanticAnalysis.withCanonical (analysis : SemanticAnalysis) (canonical : Ca
 def SemanticAnalysis.broken (diagnostics : Array String) : SemanticAnalysis :=
   { result? := none
     diagnostics }
+
+/-- Attach full-frontend use evidence only after the artifact matched the original source. -/
+def SemanticAnalysis.withDefiningModules (analysis : SemanticAnalysis)
+    (modules : Option (Array String)) : SemanticAnalysis :=
+  { analysis with
+    result? := analysis.result?.map fun result => { result with definingModules? := modules } }
 
 /-- `raw` is the file as the caller read it; identity is normalized, so normalize before comparing.
 Every `validFor` in the product takes raw bytes and normalizes, so no caller has to remember which

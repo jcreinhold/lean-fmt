@@ -19,7 +19,7 @@ import all LeanFmt.Validator
 
 import Lean.Elab.Frontend
 import Lean.Linter.Deprecated
-import Lean.Server.InfoUtils
+import Lean.Util.FoldConsts
 import Std.Sync.Mutex
 
 /-! The exact frontend: run Lean over a module and keep what only Lean can produce.
@@ -43,6 +43,9 @@ execution strategy, so the parent cannot accidentally key reporting on how it ob
 analysis. -/
 structure AnalysisEnvelope where
   artifact? : Option ModuleArtifact
+  /-- Positive defining-module uses from the full frontend; absent for a skeleton or failure.
+  This application-only fact never enters the compiler-plugin artifact. -/
+  definingModules? : Option (Array String) := none
   commentSummary? : Option CommentSummary := none
   formatDraft? : Option FormatDraft := none
   formatFailure? : Option FormatterFailure := none
@@ -988,6 +991,36 @@ private unsafe def candidateFrontend (setup : Lean.ModuleSetup) (original : Proc
         tree := Lean.Language.toSnapshotTree first
         start? := some (first, headerState) })
 
+/-- Constants referenced by this file, mapped to their defining modules without unfolding
+imported bodies. Own declarations include private and generated helpers; info trees retain
+discarded examples. This is positive use evidence, not a proof that an import is unnecessary. -/
+private def captureDefiningModules (env : Lean.Environment) (tree : Lean.Language.SnapshotTree) :
+    Array String :=
+  Id.run do
+    let mut used : Lean.NameSet := {}
+    for (name, info) in env.constants.map₂ do
+      let own :=
+        match env.getModuleIdxFor? name with
+        | none => true
+        | some index => env.header.moduleNames[index.toNat]? == some env.mainModule
+      if own then
+        used := used ++ info.getUsedConstantsAsSet
+    for infos in tree.getAll.filterMap (·.infoTree?) do
+      used :=
+        infos.foldInfo (init := used) fun _ info found =>
+          match info with
+          | .ofTermInfo term => found ++ term.expr.getUsedConstantsAsSet
+          | .ofFieldInfo field => found.insert field.projName
+          | .ofOptionInfo option => found.insert option.declName
+          | _ => found
+    let mut modules : Lean.NameSet := {}
+    for name in used do
+      if let some index := env.getModuleIdxFor? name then
+        if let some owner := env.header.moduleNames[index.toNat]? then
+          if owner != env.mainModule then
+            modules := modules.insert owner
+    return (modules.toArray.map (·.toString)).qsort (· < ·)
+
 /- Convert one completed frontend run into the product's semantic envelope.
 Incremental processing changes only where the run came from, never how formatter facts are
 derived. -/
@@ -998,7 +1031,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
     (validateFormatDraft : Bool := false) (format : FormatConfig := {})
     (validationPolicy : ValidationPolicy := .exact)
     (trackSnapshot? : Option (Lean.Language.Lean.InitialSnapshot → IO Unit) := none)
-    (checkCancelled : IO Unit := pure ()) : IO AnalysisEnvelope := do
+    (checkCancelled : IO Unit := pure ()) (captureDefiningUses : Bool := true) :
+    IO AnalysisEnvelope := do
   checkCancelled
   let options := Lean.Elab.async.setIfNotSet setup.options.toOptions true
   let tree := module.tree
@@ -1009,6 +1043,8 @@ private unsafe def analyzeSnapshot (setup : Lean.ModuleSetup) (source : String)
   let (liveCommands, terminal?) ← module.liveCommands checkCancelled
   checkCancelled
   let commands := liveCommands.map (·.stx)
+  let definingModules? :=
+    if captureDefiningUses then some (captureDefiningModules commandState.env tree) else none
   -- Semantic rule facts are captured only under rule demand. The whole-file occurrence
   -- fold remains separately gated, so report-only semantic checks do not pay for fix ownership.
   let normalizedSource := (LosslessSource.normalize source).1
@@ -1366,6 +1402,7 @@ still failed" })
   canonical? := canonical?.map ({ · with degradations := gapDegradations ++ forcedDegradations })
   return {
       artifact? := some artifact
+      definingModules?
       commentSummary? := commentSummary?
       formatDraft? := formatDraft?
       formatFailure? := formatFailure?
@@ -1426,7 +1463,7 @@ unsafe def analyzeExact (setup : Lean.ModuleSetup) (source : String) (sourcePath
     Profile.recordLine s!"cache.frontier_projection={← frontierProjectionDigest module}"
   analyzeSnapshot setup source sourcePath input module captureSemantic captureOccurrences
       captureComments captureFormatDraft validateFormatDraft format (validationPolicy :=
-      validationPolicy)
+      validationPolicy) (captureDefiningUses := skeleton?.isNone)
 
 structure IncrementalCounters where
   updates : Nat := 0

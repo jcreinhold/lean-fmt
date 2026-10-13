@@ -330,14 +330,15 @@ private def testMergeAnalysis : IO Unit := do
   let provided (analysis : SemanticAnalysis) : Cache.Decision.Provided := providedOf analysis
   -- A poorer rewrite of the same bytes keeps the richer entry's capabilities, in both orders.
   for merged in [mergeAnalysis rich poor, mergeAnalysis poor rich] do
-    ensure (provided merged == .success .semantic ⟨true⟩ true)
+    ensure (provided merged == .success .semantic ⟨true⟩ true false)
         "poorer rewrite displaced a capability the richer entry carried"
   -- Canonical text grafts onto a fresh analysis that did not render it.
   let rendered := withCanonical poor
   let merged := mergeAnalysis rendered poor
   ensure ((merged.result?.map (·.canonical?.isSome)) == some true)
       "canonical text did not graft onto the fresher analysis"
-  ensure (provided merged == .success .«syntax» {} true) "graft changed the entry's tier or caps"
+  ensure (provided merged == .success .«syntax» {} true false)
+      "graft changed the entry's tier or caps"
   -- Broken records never displace a success; a success always displaces a broken record.
   ensure (provided (mergeAnalysis poor broken) == provided poor)
       "a broken record displaced a success"
@@ -348,7 +349,7 @@ private def testMergeAnalysis : IO Unit := do
   -- stale claim): semantic-without-occurrences vs syntax-with-occurrences.
   let highTier := SemanticAnalysis.success "src" #[] .semantic
   let highCaps := SemanticAnalysis.success "src" #[] .«syntax» {} ⟨true⟩
-  ensure (provided (mergeAnalysis highTier highCaps) == .success .«syntax» ⟨true⟩ false)
+  ensure (provided (mergeAnalysis highTier highCaps) == .success .«syntax» ⟨true⟩ false false)
       "incomparable merge did not keep the fresher analysis"
   -- Unbuilt outcomes are never stored; broken and successful ones are.
   let unbuilt : SemanticAnalysis :=
@@ -396,6 +397,39 @@ private unsafe def testInterfaceHash : IO Unit := do
   ensure (artifact.interfaceHash == some first)
       "the facet artifact's interface hash disagrees with the direct computation"
 
+/-- Positive use evidence is a separate application-only cache requirement. An empty captured
+set satisfies availability; missing evidence and interface-only identity do not. -/
+private def testDefiningUseEvidence : IO Unit := do
+  let plain := SemanticAnalysis.success "src" #[]
+  let captured := plain.withDefiningModules (some #[])
+  let demand : Cache.Decision.Demand :=
+    { tier := .source, caps := {}, renderCanonical := false, definingUses := true }
+  ensure (!(providedOf plain).meets demand) "a cache entry without uses satisfied the use demand"
+  ensure ((providedOf captured).meets demand) "a captured empty use set was considered unavailable"
+  ensure (!(providedOf (useEvidenceForClosure .interface captured)).meets demand)
+      "interface-only identity certified the defining-module set"
+  ensure ((providedOf (useEvidenceForClosure .artifacts captured)).meets demand)
+      "artifact-bound identity discarded captured use evidence"
+  let source := Digest.ofString "src"
+  let closure := Digest.ofString "artifact closure"
+  let observed : Cache.Decision.Obs Unit Digest Digest String :=
+    { schema := resultCacheSchema, sourceDigest := fun _ => source,
+      closureDigest := fun _ => closure }
+  let entry : Cache.Decision.Entry Unit SemanticAnalysis Digest Digest String :=
+    { mod := (), schema := resultCacheSchema, sourceDigest := source, closureDigest := closure,
+      provided := providedOf captured, analysis := captured }
+  ensure (Cache.Decision.serves entry observed demand) "fresh artifact-bound uses did not serve"
+  ensure
+      (!(Cache.Decision.serves { entry with sourceDigest := Digest.ofString "other source" }
+          observed demand))
+      "changed source served stale defining uses"
+  ensure
+      (!(Cache.Decision.serves { entry with closureDigest := Digest.ofString "other closure" }
+          observed demand))
+      "changed dependency closure served stale defining uses"
+  for merged in [mergeAnalysis captured plain, mergeAnalysis plain captured] do
+    ensure ((providedOf merged).meets demand) "a poorer cache rewrite lost captured use evidence"
+
 /-- The cases this module contributes to the unit runner, in run order. -/
 public def cases : Array Case :=
   #[{ name := "testCacheIdentity", run := testCacheIdentity },
@@ -403,6 +437,7 @@ public def cases : Array Case :=
     { name := "testClosureDegradationDirection", run := testClosureDegradationDirection },
     { name := "testStore", run := testStore },
     { name := "testMergeAnalysis", run := testMergeAnalysis },
+    { name := "testDefiningUseEvidence", run := testDefiningUseEvidence },
     { name := "testOrganizeCandidateAgreement", run := testOrganizeCandidateAgreement },
     { name := "testInterfaceHash", run := unsafe testInterfaceHash }]
 

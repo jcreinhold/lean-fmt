@@ -337,7 +337,8 @@ theorem verdict_sound (hsd : Function.Injective sd) (hgd : Function.Injective gd
       simp only [hp] at hv
       subst hv
       exact iff_of_true rfl rfl
-    | success tier caps hasCanonical =>
+    | success tier caps hasCanonical
+      hasDefiningUses =>
       simp only [hp] at hv
       subst hv
       exact iff_of_false (by decide) (by simp)
@@ -370,8 +371,9 @@ has to follow. This is the same fact with nothing to follow: an entry exists tha
 
 /-- The decision is not identically `false`. -/
 theorem serves_hits_somewhere (o : Obs Mod SDigest GDigest Schema) (m : Mod) (a : Analysis) :
-    serves ⟨m, o.schema, o.sourceDigest m, o.closureDigest m, .success .semantic ⟨true⟩ true, a⟩ o
-        ⟨.source, {}, false⟩ =
+    serves
+        ⟨m, o.schema, o.sourceDigest m, o.closureDigest m, .success .semantic ⟨true⟩ true true, a⟩ o
+        ⟨.source, {}, false, false⟩ =
       true := by
   simp [serves, Entry.identityCurrent, Provided.meets, Tier.satisfies, SemanticCaps.subset]
 
@@ -398,10 +400,10 @@ private abbrev A : Bool → Bool → Bool × Bool := fun g s => (g, s)
 
 /-- An entry built under the *current* grammar (`true`). -/
 private abbrev Provides : Provided :=
-  .success .semantic ⟨true⟩ true
+  .success .semantic ⟨true⟩ true true
 
 private abbrev Asks : Demand :=
-  ⟨.source, {}, false⟩
+  ⟨.source, {}, false, false⟩
 
 private abbrev Fresh : Entry Unit (Bool × Bool) Bool Bool Unit :=
   ⟨(), (), true, true, Provides, (true, true)⟩

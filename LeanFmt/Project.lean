@@ -484,7 +484,13 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
   countTraversal
   try
     let jobs ← Lake.mkJobQueue
-    let bctx ← Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
+    -- Lean 4.35 renamed this constructor; both versions retain the caller's job queue.
+    let bctx ←
+      ((by
+            first
+            | exact Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
+            | exact Lake.mkBuildContext workspace { noBuild := true, verbosity := .quiet } jobs) :
+          BaseIO Lake.BuildContext)
     let computation ← Lake.Workspace.startBuild bctx build
     let job ←
       match ← computation.wait with
