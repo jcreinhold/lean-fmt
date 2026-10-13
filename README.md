@@ -20,14 +20,14 @@ alone.
 One release per Lean toolchain, tagged exactly as the toolchain. Read yours:
 
 ```sh
-cat lean-toolchain      # leanprover/lean4:v4.35.0-rc3
+cat lean-toolchain      # leanprover/lean4:v4.35.0
 ```
 
 and require the tag of the same name:
 
 ```lean
 require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v4.35.0-rc3"
+  "https://github.com/jcreinhold/lean-fmt" @ "v4.35.0"
 ```
 
 ```sh
@@ -40,7 +40,7 @@ never rebuilds your own modules.
 To put `lean-fmt` on your `PATH` instead of calling it through `lake exe`:
 
 ```sh
-git clone --branch v4.35.0-rc3 https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
+git clone --branch v4.35.0 https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
 ```
 
 With elan on `PATH` this installs the matching toolchain itself. `PREFIX=/usr/local` overrides the install location,

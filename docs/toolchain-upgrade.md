@@ -26,7 +26,7 @@ move, which is why this checklist exists.
    artifacts or cache entries written under an earlier toolchain. Cache identity includes the toolchain, so a bump
    orphans every entry wholesale by design, and the first run after a bump pays full cost.
 5. **Lake's build internals.** `LeanFmt/Project.lean` runs Lake's own graph rather than shelling out to `lake`, and it
-   reaches three non-`public` declarations through `import all Lake.Build.Run`: `mkJobQueue`, `mkBuildContext'`, and
+   reaches three non-`public` declarations through `import all Lake.Build.Run`: `mkJobQueue`, `mkBuildContext`, and
    `Workspace.startBuild`. Everything else is Lake's public surface: `Workspace.runBuild`, `Lake.ensureJob`,
    `Job.mapResult`/`zipWith`/`collectArray`, `Lake.setupServerModule`, the `olean`, `transImports`, and `setup` facets,
    and `Lake.Artifact`/`artifactWithExt`/`Hash.ofString?` for the `leanFmtArtifact` sidecar. The `setup` facet is the

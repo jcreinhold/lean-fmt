@@ -1,4 +1,4 @@
-# toolchain: leanprover/lean4:v4.35.0-rc3
+# toolchain: leanprover/lean4:v4.35.0
 # source: src/lean/Init/Data/Format/Basic.lean
 # region: 'inductive Format.FlattenBehavior where' through the end of 'def pretty'
 inductive Format.FlattenBehavior where

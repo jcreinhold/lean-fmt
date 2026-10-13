@@ -466,8 +466,8 @@ private def countTraversal : IO Unit := do
 /- One no-build graph's value, awaited job by job so one failure stays at its own position.
 
 `monitorBuild` cannot do that. It returns `.error "build failed"` whenever `MonitorResult.isOk` is
-false (`Lake/Build/Run.lean:333`), and `isOk` is `failures.isEmpty` (`:218-219`) over failures
-`reportJob` accumulates for *every* registered job (`:129`) — so one failure outranks every per-job
+false (`Lake/Build/Run.lean:342`), and `isOk` is `failures.isEmpty` (`:217-218`) over failures
+`reportJob` accumulates for *every* registered job (`:123`) — so one failure outranks every per-job
 `mapResult` and zeroes the batch. Awaiting the collection directly keeps the `mapResult` meaningful.
 Measured on the artifact facet over `ArtifactLayout` (built) plus `Main` (never built):
 `monitorBuild` gave hit=0/miss=2, this gives hit=1/miss=1.
@@ -478,19 +478,13 @@ job's log never reaches the caller's streams. The two entry points this replaced
 and a hand-built one ran a monitor for the same reason. Neither is reachable now.
 
 `finalizeBuild` is not called here either — under `noBuild` it turns staleness into
-`IO.Process.exit` (`:367-368`), which no `catch` below it survives. Staleness is a `none`. -/
+`IO.Process.exit` (`:405-406`), which no `catch` below it survives. Staleness is a `none`. -/
 private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
     (build : Lake.FetchM (Lake.Job α)) : IO (Option α) := do
   countTraversal
   try
     let jobs ← Lake.mkJobQueue
-    -- Lean 4.35 renamed this constructor; both versions retain the caller's job queue.
-    let bctx ←
-      ((by
-            first
-            | exact Lake.mkBuildContext' workspace { noBuild := true, verbosity := .quiet } jobs
-            | exact Lake.mkBuildContext workspace { noBuild := true, verbosity := .quiet } jobs) :
-          BaseIO Lake.BuildContext)
+    let bctx ← Lake.mkBuildContext workspace { noBuild := true, verbosity := .quiet } jobs
     let computation ← Lake.Workspace.startBuild bctx build
     let job ←
       match ← computation.wait with
@@ -510,13 +504,13 @@ private def noBuildValuePerJob? {α : Type} (workspace : Lake.Workspace)
 narrates would write a monitor's spinner over a report on the same stream.
 
 Quiet alone does not silence the monitor: `Verbosity.quiet` only clears `showProgress`
-(`Lake/Build/Context.lean:48-50`), while `LogConfig.outLv` keeps its `.info` default
+(`Lake/Build/Context.lean:74-75`), while `LogConfig.outLv` keeps its `.info` default
 (`Lake/Util/Log.lean:608`), so any job whose `withLoggedIO` captured info-level output — including a
 `` `Task.get` called from a `(sync := true)` task `` backtrace from Lake's own
 `Module.computeExportInfo` awaiting jobs inside a `sync := true` continuation (lean4#13598's class;
 the #13601 fix covered `recFetchSetup` only) — is reported with an `ℹ [x/y] Replayed` caption over our
 report's stream. `outLv := .warning` withholds info captures; failures still surface, because the
-monitor replays a failed job's whole log at `.trace` regardless (`Lake/Build/Run.lean:149`). -/
+monitor replays a failed job's whole log at `.trace` regardless (`Lake/Build/Run.lean:143`). -/
 private def buildValue {α : Type} (workspace : Lake.Workspace) (build : Lake.FetchM (Lake.Job α)) :
     IO α := do
   countTraversal
@@ -556,7 +550,7 @@ private def decodeLeanArgOption? (spelling : String) : Option Lean.LeanOption :=
 /- The options a module's Lake arguments set, in Lake's own order.
 
 `lake build` spawns `lean <weakLeanArgs ++ leanArgs> … --setup setup.json`
-(`Lake/Build/Module.lean:972`), so the command line and the setup are two channels and the command
+(`Lake/Build/Module.lean:996`), so the command line and the setup are two channels and the command
 line is applied second. `--setup` carries `options` and nothing else, so a project setting
 `moreLeanArgs := #["-DwarningAsError=true"]` got an option the build applies and the exact frontend
 did not — while `moduleConfiguration` folded both arrays into cache identity anyway, making the
