@@ -8,6 +8,24 @@ notes are on the [releases page](https://github.com/jcreinhold/lean-fmt/releases
 Releases are named for the Lean toolchain they serve. Releases through 0.7.1 used semantic versions and a compatibility
 table; 0.7.1 is the last of those and serves Lean `v4.34.0-rc1`.
 
+## 4.35.0-rc3 — 2026-10-13
+
+### Upgrading
+
+This version targets Lean `v4.35.0-rc3`. Move your project to
+`leanprover/lean4:v4.35.0-rc3` and require the matching formatter version. A binary
+built with this compiler does not serve Lean 4.34 projects. Cache identities include
+the toolchain, so earlier cached results are recomputed.
+
+### Changed
+
+- FMT004 retains covered imports when the exact frontend records direct use of
+  their defining modules. It remains report-only; syntax, tactics and command
+  effects can still require an import.
+- The Lake build-context adapter preserves the supplied job queue and no-build
+  behavior under Lean 4.35.
+- The reviewed native-format region matches Lean 4.35 without a body change.
+
 ## 4.34.0-rc2 — 2026-08-23
 
 ### Upgrading
