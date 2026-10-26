@@ -761,22 +761,22 @@ private unsafe def skeletonRead (setup : Lean.ModuleSetup) (source : String)
     commands := commands.push live
     unless changesParsing stx do
       continue
-    match
-      ←
-        EIO.toIO'
-            ((Lean.Elab.Command.elabCommandTopLevel stx #[]
-                  { cmdPos := commandPos
-                    fileName := sourcePath.toString
-                    fileMap := input.fileMap
-                    snap? := none
-                    cancelTk? := none }).run
-              state) with
-    | .ok (_, next) =>
+    -- The frontend owns the toolchain-specific call to elabCommandTopLevel.
+    let next? ←
+      try
+        let (_, next) ←
+          (Lean.Elab.Frontend.elabCommandAtFrontend stx { inputCtx := input }).run
+              { commandState := state, parserState, cmdPos := commandPos }
+        pure (some next.commandState)
+      catch _ =>
+        pure none
+    match next? with
+    | some next =>
       if next.messages.hasErrors then
         recordCount s!"skeleton_miss_elaboration_{stx.getKind}" 1
         return none
       state := next
-    | .error _ =>
+    | none =>
       recordCount "skeleton_miss_elaboration" 1
       return none
   let some terminal := terminal? |
