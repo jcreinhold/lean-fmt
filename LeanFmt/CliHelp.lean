@@ -181,6 +181,10 @@ private def optWorkers : HelpEntry :=
   ⟨"--workers N",
     "run up to N frontend children in parallel (default: LEAN_NUM_THREADS, else the machine's core count); the report is byte-identical at any N"⟩
 
+private def optInheritProcessGroup : HelpEntry :=
+  ⟨"--inherit-process-group",
+    "keep frontend children in the caller's supervised process group (disk batches only; not --watch)"⟩
+
 private def optWatch : HelpEntry :=
   ⟨"--watch",
     "re-run on every change until interrupted (previews only); json/sarif/junit require --output-file under --watch"⟩
@@ -229,7 +233,8 @@ private def outputSection (format : HelpEntry) : String × Array HelpEntry :=
 
 private def executionSection (watchable : Bool) : String × Array HelpEntry :=
   ("execution options:",
-    #[optNoCache, optWorkers] ++ (if watchable then #[optWatch, optPollInterval] else #[]))
+    #[optNoCache, optWorkers, optInheritProcessGroup] ++
+      (if watchable then #[optWatch, optPollInterval] else #[]))
 
 private def stdinSection (ranged : Bool) : String × Array HelpEntry :=
   ("stdin options (target `-`; never writes a file or a cache entry):",

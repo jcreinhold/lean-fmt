@@ -101,6 +101,9 @@ structure RunRequest where
   hardware concurrency. `resolveWorkers` does the picking. Scheduling only: every result is
   assembled by target index, so the report is byte-identical at any value. -/
   workers : Option Nat := none
+  /-- Keep frontend children in the caller's supervised process group. Local cancellation still
+  kills and reaps each actual child. Analysis, validation and publication are unchanged. -/
+  inheritProcessGroup : Bool := false
 
 /-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
 preview. A writer needs the validator child, so it must fall through to
@@ -190,7 +193,8 @@ private structure ChildOutput where
 it, so the registry's size is how many children are alive at that moment — the number
 `active_children` reports. Nothing samples these to enforce a limit; a child caps its own heap.
 
-`pgid` is the child's pid, which `setsid` also makes its process group's id. -/
+`pgid` is the registry's child identifier. Standalone `setsid` also makes it the process-group
+id; inherited-group mode never uses it to signal the shared group. -/
 private structure LiveChild where
   child : IO.Process.Child { stdin := .inherit, stdout := .null, stderr := .null }
   pgid : UInt32
@@ -204,8 +208,9 @@ structure ExactRun where private mk ::
   application : FilePath
   temporary : FilePath
   /-- How many frontend children may run concurrently, already resolved to a number. One takes the
-  serial `runChild` path; above one, spawns register with `registry?` instead. -/
+  serial `spawnWait` path; above one, spawns register with `registry?` instead. -/
   workers : Nat
+  inheritProcessGroup : Bool
   /-- The children running now, or `none` at one worker, where one child runs at a time and the
   frame that spawned it is the only thing that needs to find it. Read for counting and for cleanup,
   never to decide whether to kill one. -/
@@ -410,7 +415,7 @@ private partial def awaitChild
     IO.sleep 50
     awaitChild child stdoutTask stderrTask cancel? deadline?
 
-private def runChild (arguments : IO.Process.SpawnArgs)
+private def runChild (arguments : IO.Process.SpawnArgs) (inheritProcessGroup : Bool := false)
     (cancel? : Option Std.CancellationToken := none) : IO ChildOutput := do
   let child ←
     IO.Process.spawn
@@ -422,7 +427,7 @@ private def runChild (arguments : IO.Process.SpawnArgs)
           stdin := .inherit
           stdout := .piped
           stderr := .piped
-          setsid := true }
+          setsid := !inheritProcessGroup }
   -- The piped runner, for a child whose answer is small enough to hold in memory and that runs
   -- one-at-a-time (the compiler-status probe). The batch frontend path is pipe-free: its
   -- envelopes are projection-sized and its children run `workers` at a time, and two pipe
@@ -463,7 +468,7 @@ private partial def awaitChildExit
 /-- Spawn one pipe-free child and wait for its exit code: the one-worker branch of `spawnChild`,
 where one child runs at a time and the frame that spawned it is the only thing that needs to
 find it. -/
-private def spawnWait (arguments : IO.Process.SpawnArgs)
+private def spawnWait (arguments : IO.Process.SpawnArgs) (inheritProcessGroup : Bool := false)
     (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
   let child ←
     IO.Process.spawn
@@ -475,7 +480,7 @@ private def spawnWait (arguments : IO.Process.SpawnArgs)
           stdin := .inherit
           stdout := .null
           stderr := .null
-          setsid := true }
+          setsid := !inheritProcessGroup }
   recordCount "active_children" 1
   awaitChildExit child cancel? (← childDeadline?)
 
@@ -502,7 +507,8 @@ in full. A child reading 2.05 GiB of RSS had a physical footprint of 173 MiB. Th
 remains is `--workers`. -/
 private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnArgs)
     (cancel? : Option Std.CancellationToken := none) : IO UInt32 := do
-  let some registry := run.registry? | spawnWait arguments cancel?
+  let some registry :=
+    run.registry? | spawnWait arguments (inheritProcessGroup := run.inheritProcessGroup) (cancel? := cancel?)
   let child ←
     IO.Process.spawn
         { cmd := arguments.cmd
@@ -513,7 +519,7 @@ private def ExactRun.spawnChild (run : ExactRun) (arguments : IO.Process.SpawnAr
           stdin := .inherit
           stdout := .null
           stderr := .null
-          setsid := true }
+          setsid := !run.inheritProcessGroup }
   let entry : LiveChild :=
     { child
       pgid := child.pid }
@@ -889,8 +895,8 @@ or editor request needs it; cache-only and ordinary-evidence batch runs create n
 
 Above one, `workers` creates the child registry. Nothing polls it to enforce anything; the run
 counts its children and cleans up after them, and that is all. -/
-def withExactRun (project : Project.Snapshot) (workers : Nat := 1) (action : ExactRun → IO α) :
-    IO α := do
+def withExactRun (project : Project.Snapshot) (workers : Nat := 1)
+    (inheritProcessGroup : Bool := false) (action : ExactRun → IO α) : IO α := do
   let temporary ← IO.FS.createTempDir
   let nextIndex ← IO.mkRef 0
   let setups ← IO.mkRef {}
@@ -905,6 +911,7 @@ def withExactRun (project : Project.Snapshot) (workers : Nat := 1) (action : Exa
       application := ← IO.appPath
       temporary
       workers
+      inheritProcessGroup
       registry?
       nextIndex
       setups
@@ -2078,7 +2085,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
       let positions ← profiledPositions snapshots files
       return { report := summarize request.mode.toString files, positions }
   milestone "starting the toolchain..."
-  withExactRun project workers fun exactRun => do
+  withExactRun project workers request.inheritProcessGroup fun exactRun => do
       -- Exactly the files the decisions above left unanswered, which is exactly the set that
       -- will spawn a frontend child and so need a Lake setup.
       exactRun.primeSetups <|

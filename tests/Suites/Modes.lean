@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all LeanFmt.Application
+
 /-!
 # The modes suite
 
@@ -148,6 +150,152 @@ private def pathsWithStatus (report : Lean.Json) (dirtyStatuses : List String) :
 /-- Temp files orphaned beside a target: the `.lean-fmt-tmp-*` family the crash tests count. -/
 private def tmpOrphans (dir : System.FilePath) (stem : String) : IO (Array String) := do
   return ((← dir.readDir).map (·.fileName)).filter (·.startsWith stem)
+
+/-- Observe actual frontend groups through the existing analyzer injection, then exec the real
+frontend. These records are assertions only; no recorded PID ever authorizes a signal. -/
+private def groupEnvironment (ctx : Ctx) (records : System.FilePath) (sleep : Bool := false) :
+    Array (String × Option String) :=
+  #[("LEAN_FMT_TEST_ANALYZER", some (ctx.work / "group-analyzer").toString),
+    ("LEAN_FMT_TEST_VALIDATOR", some (ctx.work / "group-analyzer").toString),
+    ("LEAN_FMT_TEST_GROUP_RECORDS", some records.toString),
+    ("LEAN_FMT_TEST_REAL_APPLICATION", some ctx.app),
+    ("LEAN_FMT_TEST_GROUP_PROBE",
+      some (ctx.root / "tests/fixtures/formatter/process_group.py").toString),
+    ("LEAN_FMT_TEST_GROUP_SLEEP", some (if sleep then "1" else "0")),
+    ("LEAN_FMT_DISABLE_ARTIFACT", some "1"), ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1")]
+
+private def ensureGroups (records : System.FilePath) (inherited : Bool) (minimum : Nat) : IO Unit :=
+  do
+  let entries ← records.readDir
+  ensure (entries.size >= minimum) "the controlled frontend did not run for every selected source"
+  for entry in entries do
+    let row ← parseJson (← IO.FS.readFile entry.path) "process group record"
+    let pid := (((jsonAt? row [.field "pid"]).bind (·.getNat?.toOption)).getD 0)
+    let group := (((jsonAt? row [.field "group"]).bind (·.getNat?.toOption)).getD 0)
+    let parent := (((jsonAt? row [.field "parent_group"]).bind (·.getNat?.toOption)).getD 0)
+    let session := (((jsonAt? row [.field "session"]).bind (·.getNat?.toOption)).getD 0)
+    let parentSession :=
+      (((jsonAt? row [.field "parent_session"]).bind (·.getNat?.toOption)).getD 0)
+    ensure (pid > 1 && group > 1 && parent > 1 && session > 1 && parentSession > 1)
+        "missing actual process identities"
+    if inherited then
+      ensure (group == parent && session == parentSession) "a managed frontend detached"
+    else
+      ensure (group == pid && session == pid && group != parent) "standalone isolation changed"
+
+private def testManagedGroups (ctx : Ctx) : IO Unit := do
+  let beforeLayout ← metadataLine ctx.layout
+  let beforeFindings ← metadataLine ctx.findings
+  let mut expected : Option String := none
+  for workers in [1, 2] do
+    for inherited in [false, true] do
+      let records := ctx.work / s!"groups-{workers}-{inherited}"
+      IO.FS.createDirAll records
+      let flags := if inherited then #["--inherit-process-group"] else #[]
+      let result ←
+        run ctx 1 "managed group preview"
+            (#["format", "--check", "--root", ".", "--json", "--no-cache", "--workers",
+                toString workers, "tests/fixtures/check/Layout.lean",
+                "tests/fixtures/check/Findings.lean"] ++
+              flags)
+            (groupEnvironment ctx records)
+      match expected with
+      | none =>
+        expected := some result.stdout
+      | some value =>
+        ensureEq "group mode changed the preview" value result.stdout
+      ensureEq "preview wrote Layout" beforeLayout (← metadataLine ctx.layout)
+      ensureEq "preview wrote Findings" beforeFindings (← metadataLine ctx.findings)
+      let report ← parseJson result.stdout "managed preview"
+      ensureJsonAt report [.field "validationBypassed"] (Lean.toJson (0 : Nat)) "managed preview"
+      ensureGroups records inherited 2
+  withRestored ctx.backupLayout ctx.layout do
+      let mut published : Option String := none
+      for inherited in [false, true] do
+        cpPreserve ctx.backupLayout ctx.layout
+        let flags := if inherited then #["--inherit-process-group"] else #[]
+        let report ←
+          runJson ctx 0 "managed validated write"
+              (#["format", "--root", ".", "--json", "--no-cache", "--workers", "2",
+                  "tests/fixtures/check/Layout.lean"] ++
+                flags)
+        ensureJsonAt report [.field "written"] (Lean.toJson (1 : Nat)) "managed write"
+        ensureJsonAt report [.field "validationBypassed"] (Lean.toJson (0 : Nat)) "managed write"
+        let bytes ← IO.FS.readFile ctx.layout
+        match published with
+        | none =>
+          published := some bytes
+        | some value =>
+          ensureEq "group mode changed validated publication" value bytes
+  let rejected ←
+    runJson ctx 1 "managed exact validator rejection"
+        (fixArgs "tests/fixtures/check/Findings.lean" ++ #["--inherit-process-group"])
+        #[("LEAN_FMT_TEST_VALIDATOR", some (ctx.work / "reject-validator").toString)]
+  ensureJsonAt rejected [.field "rejected"] (Lean.toJson (1 : Nat)) "managed rejection"
+  ensureJsonAt rejected [.field "written"] (Lean.toJson (0 : Nat)) "managed rejection"
+  ensureEq "managed validation rejection wrote source" beforeFindings (← metadataLine ctx.findings)
+
+private def testManagedGroupRejections (ctx : Ctx) : IO Unit := do
+  for args in
+    [#["format", "-", "--stdin-filename", "Repro.lean", "--inherit-process-group"],
+      #["format", "--check", "--watch", "--inherit-process-group"],
+      #["organize", "--inherit-process-group"], #["lsp", "--inherit-process-group"]] do
+    let result ← run ctx 2 "unsupported managed surface" args
+    ensure (result.stderr.contains "--inherit-process-group") "unsupported integration was ignored"
+
+private def testManagedGroupTimeout (ctx : Ctx) : IO Unit := do
+  let before ← metadataLine ctx.layout
+  for workers in [1, 2] do
+    for inherited in [false, true] do
+      let records := ctx.work / s!"timeout-groups-{workers}-{inherited}"
+      IO.FS.createDirAll records
+      let flags := if inherited then #["--inherit-process-group"] else #[]
+      let result ←
+        run ctx 2 "managed child timeout"
+            (#["format", "--check", "--root", ".", "--json", "--no-cache", "--workers",
+                toString workers, "tests/fixtures/check/Layout.lean"] ++
+              flags)
+            (groupEnvironment ctx records true |>.push ("LEAN_FMT_CHILD_TIMEOUT_MS", some "500"))
+      ensure (result.stdout.contains "ran past its 500 ms bound") "child timeout was not reported"
+      ensureGroups records inherited 1
+      IO.sleep 2200
+      ensure (!(← (records / "completed").pathExists)) "timed-out child continued executing"
+      ensureEq "timeout wrote source" before (← metadataLine ctx.layout)
+
+/-- Exercise the cancellation token at the same spawn boundary used by disk batches. The token
+is sent only after the controlled child is ready, and that actual Child is killed and reaped. -/
+private def testManagedGroupCancellation (ctx : Ctx) : IO Unit := do
+  for inherited in [false, true] do
+    let records := ctx.work / s!"cancel-groups-{inherited}"
+    IO.FS.createDirAll records
+    let cancellation ← Std.CancellationToken.new
+    let cancelTask ←
+      IO.asTask
+          (do
+            for _ in [:500] do
+              if !(← records.readDir).isEmpty then
+                cancellation.cancel
+                return
+              IO.sleep 10
+            cancellation.cancel
+            throw <| IO.userError "controlled cancellation child never became ready")
+          Task.Priority.dedicated
+    let cancelled ←
+      try
+        discard <|
+            LeanFmt.Internal.Application.spawnWait
+              { cmd := "python3"
+                args := #[(ctx.root / "tests/fixtures/formatter/process_group.py").toString]
+                env := groupEnvironment ctx records true } (inheritProcessGroup := inherited)
+              (cancel? := some cancellation)
+        pure false
+      catch error =>
+        pure (LeanFmt.Internal.Application.cancelled? error)
+    IO.ofExcept (← IO.wait cancelTask)
+    ensure cancelled "child cancellation was lost"
+    ensureGroups records inherited 1
+    IO.sleep 2200
+    ensure (!(← (records / "completed").pathExists)) "cancelled child continued executing"
 
 -- -----------------------------------------------------------------------------------------------
 -- The committed `tests/fixtures/check` fixtures
@@ -1076,8 +1224,17 @@ public def main (args : List String) : IO UInt32 := do
               "Findings:leanFmtArtifact", "Clean:leanFmtArtifact", "Layout:leanFmtArtifact"]
             (cwd? := some root) (env := #[("LEAN_NUM_THREADS", some "1")]) (timeoutMs :=
             some 1800000)
+      writeFile (work / "group-analyzer")
+          "#!/bin/sh\nexec python3 \"$LEAN_FMT_TEST_GROUP_PROBE\" \"$@\"\n"
+      discard <|
+          expectExit 0 "chmod controlled analyzer" "chmod"
+            #["+x", (work / "group-analyzer").toString]
       let cases : Array Case :=
-        #[{ name := "previews", run := Modes.testPreviews ctx },
+        #[{ name := "managed-groups", run := Modes.testManagedGroups ctx },
+          { name := "managed-group-rejections", run := Modes.testManagedGroupRejections ctx },
+          { name := "managed-group-timeout", run := Modes.testManagedGroupTimeout ctx },
+          { name := "managed-group-cancellation", run := Modes.testManagedGroupCancellation ctx },
+          { name := "previews", run := Modes.testPreviews ctx },
           { name := "layout-format", run := Modes.testLayoutFormat ctx },
           { name := "no-validate", run := Modes.testNoValidate ctx },
           { name := "layout-no-newline", run := Modes.testLayoutNoNewline ctx },

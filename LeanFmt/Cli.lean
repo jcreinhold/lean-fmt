@@ -327,6 +327,8 @@ private def parseFileArgs (mode : RunMode) (args : List String) :
       else .error "--no-validate is available only when `format` writes files"
     | "--unsafe-fixes" :: rest =>
       loop mode rest { command with run := { command.run with unsafeFixes := true } }
+    | "--inherit-process-group" :: rest =>
+      loop mode rest { command with run := { command.run with inheritProcessGroup := true } }
     | "--workers" :: value :: rest =>
       match value.toNat? with
       | some amount =>
@@ -456,6 +458,13 @@ private def validateNoValidate (mode : RunMode) (command : FileCommand) : Except
         is nothing to skip"
     else
       .ok ()
+  else
+    .ok ()
+
+/-- The external supervisor integration covers one finite disk batch. -/
+private def validateProcessGroup (command : FileCommand) : Except String Unit := do
+  if command.run.inheritProcessGroup && (command.stdin || command.watch) then
+    .error "--inherit-process-group requires a disk batch without --watch"
   else
     .ok ()
 
@@ -1554,6 +1563,9 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
     IO.eprintln message
     return 2
   if let .error message := validateChanged command then
+    IO.eprintln message
+    return 2
+  if let .error message := validateProcessGroup command then
     IO.eprintln message
     return 2
   if let .error message := validateNoValidate mode command then
