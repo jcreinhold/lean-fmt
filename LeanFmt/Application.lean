@@ -104,6 +104,9 @@ structure RunRequest where
   /-- Keep frontend children in the caller's supervised process group. Local cancellation still
   kills and reaps each actual child. Analysis, validation and publication are unchanged. -/
   inheritProcessGroup : Bool := false
+  /-- Resolve exact setups from existing artifacts only; refuse a missing or stale setup without
+  building project or dependency sources. Workspace configuration is still evaluated. -/
+  noBuild : Bool := false
 
 /-- Whether this run publishes source. `fix` always does; `format` does unless `--check` demotes it to a
 preview. A writer needs the validator child, so it must fall through to
@@ -574,9 +577,7 @@ Best effort by construction. Anything this fails to resolve is absent from the m
 private def ExactRun.primeSetups (run : ExactRun) (targets : Array SourceSnapshot) : IO Unit := do
   if targets.size < 2 then
     return
-  let facts ←
-    withPhase "setup_prime" <|
-        Project.graph run.project.workspace targets (demand := { setups := true })
+  let facts ← withPhase "setup_prime" <| run.project.graph targets (demand := { setups := true })
   run.setups.modify fun map =>
       (targets.zip facts.targets).foldl (init := map) fun map (target, resolved) =>
         match resolved.setup? with
@@ -597,10 +598,15 @@ private def ExactRun.envelope (run : ExactRun) (snapshot : SourceSnapshot) (capt
   let (setupResult, setupPath, sourcePath, outPath, errPath) ←
     withPhase "exact_setup" do
         let setupResult ← run.setupResult snapshot
-        let setup :=
+        let setup ←
           match setupResult with
-          | .ok setup => setup
-          | .error _ => diagnosticSetup snapshot
+          | .ok setup =>
+            pure setup
+          | .error error =>
+            if run.project.noBuild then
+              throw error
+            else
+              pure (diagnosticSetup snapshot)
         let setupPath ← writeSetup run.temporary index setup
         let sourcePath := run.temporary / s!"{index}.lean"
         IO.FS.writeFile sourcePath snapshot.source
@@ -1927,7 +1933,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
       announced := announced.push notice
       IO.eprintln s!"lean-fmt: {notice}"
   milestone "loading the Lake workspace..."
-  let project ← Project.load root discovery request.files
+  let project ← Project.load root discovery request.files (noBuild := request.noBuild)
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
@@ -2054,9 +2060,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- `BuildStore` is per-`startBuild`, so nothing the first resolved was reused by the second.
   let evidenceStarted ← IO.monoNanosNow
   milestone "resolving module build state..."
-  let facts ←
-    Project.graph project.workspace snapshots (demand :=
-        { status := true, artifacts := artifactServes })
+  let facts ← project.graph snapshots (demand := { status := true, artifacts := artifactServes })
   let evidence ← Project.moduleEvidence project facts
   let artifacts := facts.targets.map (·.artifact?)
   let evidenceFinished ← IO.monoNanosNow

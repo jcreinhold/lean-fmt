@@ -329,6 +329,8 @@ private def parseFileArgs (mode : RunMode) (args : List String) :
       loop mode rest { command with run := { command.run with unsafeFixes := true } }
     | "--inherit-process-group" :: rest =>
       loop mode rest { command with run := { command.run with inheritProcessGroup := true } }
+    | "--no-build" :: rest =>
+      loop mode rest { command with run := { command.run with noBuild := true } }
     | "--workers" :: value :: rest =>
       match value.toNat? with
       | some amount =>
@@ -463,8 +465,10 @@ private def validateNoValidate (mode : RunMode) (command : FileCommand) : Except
 
 /-- The external supervisor integration covers one finite disk batch. -/
 private def validateProcessGroup (command : FileCommand) : Except String Unit := do
-  if command.run.inheritProcessGroup && (command.stdin || command.watch) then
-    .error "--inherit-process-group requires a disk batch without --watch"
+  if
+      (command.run.inheritProcessGroup || command.run.noBuild) &&
+        (command.stdin || command.watch) then
+    .error "--inherit-process-group and --no-build require a disk batch without --watch"
   else
     .ok ()
 

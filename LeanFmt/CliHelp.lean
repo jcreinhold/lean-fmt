@@ -185,6 +185,10 @@ private def optInheritProcessGroup : HelpEntry :=
   ⟨"--inherit-process-group",
     "keep frontend children in the caller's supervised process group (disk batches only; not --watch)"⟩
 
+private def optNoBuild : HelpEntry :=
+  ⟨"--no-build",
+    "use existing exact module setups; refuse stale or missing dependencies without building sources"⟩
+
 private def optWatch : HelpEntry :=
   ⟨"--watch",
     "re-run on every change until interrupted (previews only); json/sarif/junit require --output-file under --watch"⟩
@@ -233,7 +237,7 @@ private def outputSection (format : HelpEntry) : String × Array HelpEntry :=
 
 private def executionSection (watchable : Bool) : String × Array HelpEntry :=
   ("execution options:",
-    #[optNoCache, optWorkers, optInheritProcessGroup] ++
+    #[optNoCache, optWorkers, optInheritProcessGroup, optNoBuild] ++
       (if watchable then #[optWatch, optPollInterval] else #[]))
 
 private def stdinSection (ranged : Bool) : String × Array HelpEntry :=

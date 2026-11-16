@@ -131,6 +131,8 @@ structure Snapshot where private mk ::
   targets : Array SourceTarget
   workspaceLoadNanos : Nat
   selectionNanos : Nat
+  /-- A finite caller can prohibit setup builds while retaining exact no-build resolution. -/
+  noBuild : Bool := false
   private closures : Std.Mutex ClosureMemo
 
 inductive ModuleEvidence where
@@ -332,8 +334,8 @@ An explicitly named file skips gates 2-4 unless its effective configuration sets
 never consults `include` even then — `include` answers "when I say nothing, format these", and naming
 a path is saying something. Gate 1 is not skippable and lives in `snapshotTarget`, so it covers
 both path forms. -/
-def load (requestedRoot : FilePath) (discovery : Discovery.Discovery) (requested : Array FilePath) :
-    IO Snapshot := do
+def load (requestedRoot : FilePath) (discovery : Discovery.Discovery) (requested : Array FilePath)
+    (noBuild : Bool := false) : IO Snapshot := do
   let root ← IO.FS.realPath requestedRoot
   let workspaceStarted ← IO.monoNanosNow
   let workspace ← loadWorkspace root
@@ -374,6 +376,7 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery) (requested
       targets := deduplicate (targets.qsort relativeLess)
       workspaceLoadNanos := workspaceFinished - workspaceStarted
       selectionNanos := selectionFinished - workspaceFinished
+      noBuild
       closures := ← Std.Mutex.new {} }
 
 /-- The Lake workspace alone, selecting nothing.
@@ -781,7 +784,8 @@ the other 126. `monitorBuild` cannot give it, for the reason `noBuildValuePerJob
 resolvable closure, which is why `ResultCache.closureDigests` gives such targets the conservative
 whole-workspace digest. Resolving them from `module?` would silently re-key every such entry. -/
 def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
-    (extraImports : Array Lean.Name := #[]) (demand : Demand := {}) : IO GraphFacts := do
+    (extraImports : Array Lean.Name := #[]) (demand : Demand := {}) (noBuild : Bool := false) :
+    IO GraphFacts := do
   let blank : GraphFacts :=
     { targets := Array.replicate targets.size {}
       imports := Std.HashMap.emptyWithCapacity 0
@@ -910,7 +914,7 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
     let stale :=
       (setupTargets.zip probed).map fun (target?, setup?) => if setup?.isNone then target? else none
     let setups ←
-      if stale.all Option.isNone then
+      if noBuild || stale.all Option.isNone then
         pure probed
       else
         try
@@ -947,6 +951,12 @@ def graph (workspace : Lake.Workspace) (targets : Array SourceTarget)
                   if closures.2.contains name then some (visibleFrom name closures.2) else none }
         edges := closures.2 }
 
+/-- Query the snapshot's graph while preserving its setup-build policy. -/
+def Snapshot.graph (snapshot : Snapshot) (targets : Array SourceTarget)
+    (extraImports : Array Lean.Name := #[]) (demand : Demand := {}) : IO GraphFacts :=
+  _root_.LeanFmt.Internal.Project.graph snapshot.workspace targets extraImports demand (noBuild :=
+    snapshot.noBuild)
+
 /-- The transitive import closure of each named module, and of every selected target's module.
 
 Same shape as `GraphFacts.imports` and the same three answers, so a caller reads it the same way.
@@ -977,7 +987,7 @@ def Snapshot.importClosures (snapshot : Snapshot) (names : Array Lean.Name) : IO
         if memo.asked.contains name || missing.contains name then missing else missing.push name
     if missing.isEmpty then
       return { closures := memo.resolved, edges := memo.edges }
-    let facts ← graph snapshot.workspace #[] missing { closures := true }
+    let facts ← snapshot.graph #[] missing { closures := true }
     let asked := missing.foldl (init := memo.asked) fun asked name => asked.insert name
     let resolved :=
       missing.foldl (init := memo.resolved) fun resolved name =>
@@ -1051,7 +1061,11 @@ def exactSetup (snapshot : Snapshot) (target : SourceTarget) : IO Lean.ModuleSet
   | some setup =>
     return setup
   | none =>
-    withPhase "setup_build" <| buildValue snapshot.workspace (setupJob target)
+    if snapshot.noBuild then
+      throw <|
+          IO.userError s!"--no-build: exact setup is missing or stale for {target.relativePath}"
+    else
+      withPhase "setup_build" <| buildValue snapshot.workspace (setupJob target)
 
 private def moduleConfiguration (mod : Lake.Module) : String :=
   String.intercalate "\u0000"

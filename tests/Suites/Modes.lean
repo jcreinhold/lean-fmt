@@ -297,6 +297,65 @@ private def testManagedGroupCancellation (ctx : Ctx) : IO Unit := do
     IO.sleep 2200
     ensure (!(← (records / "completed").pathExists)) "cancelled child continued executing"
 
+/-- Source compilation is never a fallback under --no-build. This dependency-free private project
+covers both single-source exactSetup and multi-source setup priming, with unchanged artifacts and
+no setup_build phase. Explicitly building the fixture is the positive control. -/
+private def testNoBuildPolicy (ctx : Ctx) : IO Unit := do
+  let project := ctx.work / "no-build-project"
+  IO.FS.createDirAll (project / "Demo")
+  copyFile (ctx.root / "lean-toolchain") (project / "lean-toolchain")
+  writeFile (project / "lakefile.lean")
+      "import Lake\nopen Lake DSL\npackage noBuildFixture\nlean_lib Demo where\n  globs := #[`Demo.*]\n"
+  writeFile (project / "Demo.lean") "module\n\nimport Demo.Dependency\n\ndef demo : Nat :=\n  1\n"
+  writeFile (project / "Demo/Other.lean")
+      "module\n\nimport Demo.Dependency\n\ndef other : Nat :=\n  2\n"
+  writeFile (project / "Demo/Dependency.lean") "module\n\ndef dependency : Nat := 3\n"
+  let dependency := project / ".lake/build/lib/lean/Demo/Dependency.olean"
+  let runNoBuild (expected : UInt32) (files : Array String) : IO ProcResult :=
+    expectExit expected "no-build exact setup" ctx.app
+      (#["format", "--check", "--root", project.toString, "--json", "--no-cache", "--no-build",
+          "--inherit-process-group", "--workers", "2"] ++
+        files)
+      (cwd? := some ctx.root) (env :=
+      #[("LEAN_FMT_PROFILE_PHASES", some "1"), ("LEAN_FMT_DISABLE_ARTIFACT", some "1"),
+        ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1")])
+      (timeoutMs := some 600000)
+  for files in [#["Demo.lean"], #["Demo.lean", "Demo/Other.lean"]] do
+    let result ← runNoBuild 2 files
+    ensure (result.stdout.contains "--no-build: exact setup is missing or stale")
+        "missing setup did not refuse explicitly"
+    ensure (!(result.stderr.contains "phase.setup_build_ms="))
+        "a no-build request entered a build traversal"
+    ensure (!(result.stderr.contains "phase.exact_child_ms="))
+        "missing setup launched an approximate frontend"
+    ensure (!(← dependency.pathExists)) "no-build created its missing dependency"
+  discard <|
+      expectExit 0 "build no-build fixture control" "lake" #["build", "Demo"] (cwd? := some project)
+        (env := #[("LEAN_NUM_THREADS", some "2")]) (timeoutMs := some 120000)
+  let before ← sha256 dependency
+  let usable ← runNoBuild 0 #["Demo.lean", "Demo/Other.lean"]
+  let report ← parseJson usable.stdout "prebuilt no-build"
+  ensureJsonAt report [.field "validationBypassed"] (Lean.toJson (0 : Nat)) "prebuilt no-build"
+  ensure (!(usable.stderr.contains "phase.setup_build_ms=")) "a warm no-build request built sources"
+  writeFile (project / "Demo/Dependency.lean") "module\n\ndef dependency : Nat := 4\n"
+  for files in [#["Demo.lean"], #["Demo.lean", "Demo/Other.lean"]] do
+    let result ← runNoBuild 2 files
+    ensure (result.stdout.contains "--no-build: exact setup is missing or stale")
+        "stale setup did not refuse explicitly"
+    ensure (!(result.stderr.contains "phase.setup_build_ms="))
+        "stale setup entered a build traversal"
+    ensure (!(result.stderr.contains "phase.exact_child_ms="))
+        "stale setup launched an approximate frontend"
+    ensureEq "no-build replaced a stale dependency" before (← sha256 dependency)
+
+private def testNoBuildUnsupportedSurfaces (ctx : Ctx) : IO Unit := do
+  for args in
+    [#["format", "-", "--stdin-filename", "Repro.lean", "--no-build"],
+      #["format", "--check", "--watch", "--no-build"], #["organize", "--no-build"],
+      #["lsp", "--no-build"]] do
+    let result ← run ctx 2 "unsupported no-build surface" args
+    ensure (result.stderr.contains "--no-build") "unsupported no-build request was ignored"
+
 -- -----------------------------------------------------------------------------------------------
 -- The committed `tests/fixtures/check` fixtures
 
@@ -1230,7 +1289,9 @@ public def main (args : List String) : IO UInt32 := do
           expectExit 0 "chmod controlled analyzer" "chmod"
             #["+x", (work / "group-analyzer").toString]
       let cases : Array Case :=
-        #[{ name := "managed-groups", run := Modes.testManagedGroups ctx },
+        #[{ name := "no-build-policy", run := Modes.testNoBuildPolicy ctx },
+          { name := "no-build-surfaces", run := Modes.testNoBuildUnsupportedSurfaces ctx },
+          { name := "managed-groups", run := Modes.testManagedGroups ctx },
           { name := "managed-group-rejections", run := Modes.testManagedGroupRejections ctx },
           { name := "managed-group-timeout", run := Modes.testManagedGroupTimeout ctx },
           { name := "managed-group-cancellation", run := Modes.testManagedGroupCancellation ctx },
