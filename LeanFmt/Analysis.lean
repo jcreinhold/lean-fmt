@@ -764,7 +764,7 @@ private unsafe def skeletonRead (setup : Lean.ModuleSetup) (source : String)
     match
       ←
         EIO.toIO'
-            ((Lean.Elab.Command.elabCommandTopLevel stx #[]
+            ((Lean.Elab.Command.elabCommandTopLevel stx
                   { cmdPos := commandPos
                     fileName := sourcePath.toString
                     fileMap := input.fileMap

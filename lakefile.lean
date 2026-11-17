@@ -20,7 +20,7 @@ package «lean-fmt» where
   -- The version is the Lean toolchain this build serves, and the release tag is spelled the same
   -- way: a build loads the consumer's `.olean`s, and those load only in the compiler that wrote
   -- them, so there is exactly one right answer per toolchain and no second axis to carry.
-  version := v!"4.35.0"
+  version := v!"4.36.0"
   -- Lake's own statement of that constraint, and what makes a mismatched consumer fail at
   -- resolution rather than somewhere deep in a build.
   fixedToolchain := true
@@ -453,12 +453,12 @@ both extraction from that exact module artifact and its compact, cacheable outpu
 file or post-hoc identity association exists. -/
 module_facet leanFmtArtifact (mod : Module) : Artifact := do
   let extractorJob ← artifactExtractor.fetch
-  -- `leanArts`, not `olean`: since v4.34 the base `.olean` no longer carries the payload — it
+  -- `irArts`, not `olean`: since v4.34 the base `.olean` no longer carries the payload — it
   -- lives in the server part — and the `olean` facet's trace does not move when only that part
   -- changes. The parts' own content traces are added below, the same
   -- avoid-recompiling-unchanged-oleans pattern as Lake's `fetchOLeanCore`.
   let dependency :=
-    (← mod.leanArts.fetch).zipWith (fun arts extractor => (arts, extractor)) extractorJob
+    (← mod.irArts.fetch).zipWith (fun arts extractor => (arts, extractor)) extractorJob
   dependency.mapM fun (arts, extractor) => do
       withCurrPackage mod.pkg do
           newTrace s!"{mod.name.toString}:leanFmtArtifact"

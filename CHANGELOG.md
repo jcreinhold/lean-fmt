@@ -8,6 +8,22 @@ notes are on the [releases page](https://github.com/jcreinhold/lean-fmt/releases
 Releases are named for the Lean toolchain they serve. Releases through 0.7.1 used semantic versions and a compatibility
 table; 0.7.1 is the last of those and serves Lean `v4.34.0-rc1`.
 
+## 4.36.0 — 2026-11-17
+
+### Upgrading
+
+This version targets Lean `v4.36.0`. Move your project to
+`leanprover/lean4:v4.36.0` and require the matching formatter version. Cache
+identities include the toolchain, so earlier cached results are recomputed.
+
+### Changed
+
+- The exact frontend's syntax-preserving read uses Lean 4.36's command elaboration API.
+- The compiler artifact facet uses Lake's `irArts` name in place of its deprecated
+  `leanArts` alias, preserving the same module-artifact dependency.
+- The reviewed native-format region matches Lean 4.36 without a body change.
+- The manual uses the matching Verso 4.36 release.
+
 ## 4.35.0 — 2026-10-13
 
 ### Upgrading
