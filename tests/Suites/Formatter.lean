@@ -43,7 +43,8 @@ private def testGate (ctx : Ctx) (fixture mode gate : String) : IO Unit := do
 
 /-- The identity baseline: the identity candidate is admitted with zero changes, and the summary
 digest is the pinned one — the digest input recipe (sorted keys, compact separators, NUL, then
-the formatted bytes) is frozen across the Python and Lean oracles. -/
+the formatted bytes) is frozen across the Python and Lean oracles. The digest moved in Lean
+4.36 when doc-comment bodies gained separate text and closer leaves. -/
 private def testIdentity (ctx : Ctx) : IO Unit := do
   let outcome ←
     LeanFmt.Test.Oracle.run ctx.root ctx.application ctx.setup ctx.work
@@ -62,7 +63,7 @@ private def testIdentity (ctx : Ctx) : IO Unit := do
     ensure (nodes > 0 && tokens > 0) "identity: empty projection"
     ensureJsonAt summary [.field "comments"] (Lean.toJson (3 : Nat)) "identity"
     ensureJsonAt summary [.field "digest"]
-        (Lean.toJson "de426c98ee255b1e5d3b4c030a1d0aa7bcf060a694e456ecc91db6a9556cbc09") "identity"
+        (Lean.toJson "0a5d2ea6858f80d1321a19d39ab17545f643871e2dd8edbe4d417a69e7b11356") "identity"
 
 end Formatter
 

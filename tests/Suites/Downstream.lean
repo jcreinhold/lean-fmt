@@ -46,6 +46,56 @@ private def testFacetResolution (ctx : Ctx) : IO Unit := do
   ensure (← sidecar.pathExists) "facet produced no sidecar for a downstream module"
   ensure ((← sidecar.metadata).byteSize > 0) "the sidecar is empty"
 
+/-- The projection lives in the server part. A trivia-only edit changes that part while the
+base olean stays byte-identical, so the sidecar must track the server part's content trace. -/
+private def testServerArtifactInvalidation (ctx : Ctx) : IO Unit :=
+  withScratchDir "downstream-server" fun scratch => do
+    -- Keep the fixture at the same depth so its path dependency still resolves.
+    let project := scratch / "project"
+    copyTree ctx.project project
+    let ctx := { ctx with project }
+    let source := ctx.project / "Consumer" / "Basic.lean"
+    let pristine ← IO.FS.readFile source
+    let build := ctx.project / ".lake" / "build"
+    let olean := build / "lib" / "lean" / "Consumer" / "Basic.olean"
+    let server : System.FilePath := ⟨olean.toString ++ ".server"⟩
+    let sidecar := build / "lean-fmt-artifacts" / "Consumer" / "Basic.json"
+    let facet := #["build", "+Consumer.Basic:leanFmtArtifact"]
+    let check (disableArtifact : Bool := false) : IO ProcResult :=
+      lakeAny ctx
+          #["exe", "lean-fmt", "check", "--root", ".", "--json", "--no-cache",
+            "--preview", "--select", "FMT010", "Consumer/Basic.lean"]
+          (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"),
+            ("LEAN_FMT_DISABLE_ARTIFACT", if disableArtifact then some "1" else none)])
+    let expectRoute (result : ProcResult) (hit : Bool) : IO Unit := do
+      let route := if hit then "hit" else "miss"
+      let profile := result.stderr.splitOn "\n"
+      ensureEq s!"artifact {route} check failed\n{result.stdout}{result.stderr}" 0 result.exitCode
+      ensure (profile.contains s!"cache.official_artifact_{route}=1") result.stderr
+      ensureEq s!"unexpected exact frontend work on artifact {route}" (!hit)
+          (profile.any (·.startsWith "phase.exact_child_ms="))
+    discard <| lake ctx facet "baseline downstream facet"
+    expectRoute (← check) true
+    let baseHash ← sha256 olean
+    let serverHash ← sha256 server
+    let sidecarHash ← sha256 sidecar
+    writeFile source (pristine ++ "\n-- A server-only projection change.\n")
+    discard <| lake ctx #["build", "+Consumer.Basic:irArts"] "rebuild server part"
+    ensureEq "trivia edit changed the base olean" baseHash (← sha256 olean)
+    ensure ((← sha256 server) != serverHash) "trivia edit left the server part unchanged"
+    ensureEq "irArts unexpectedly rebuilt the sidecar" sidecarHash (← sha256 sidecar)
+    let stale ← check
+    expectRoute stale false
+    ensureEq "no-build check rewrote the stale sidecar" sidecarHash (← sha256 sidecar)
+    discard <| lake ctx facet "refresh downstream facet after server-only edit"
+    ensure ((← sha256 sidecar) != sidecarHash) "facet reused the stale sidecar"
+    let refreshed ← check
+    expectRoute refreshed true
+    let exact ← check true
+    ensureEq "forced exact check failed" 0 exact.exitCode
+    ensureEq "refreshed artifact and exact reports differ" exact.stdout refreshed.stdout
+    ensureEq "stale artifact fallback and exact reports differ" exact.stdout stale.stdout
+
 /-- The executable resolves across packages: a consumer needs `require` and nothing else. -/
 private def testCrossPackageExe (ctx : Ctx) : IO Unit := do
   let result ← lakeAny ctx #["exe", "lean-fmt", "check", "--root", "."]
@@ -172,6 +222,7 @@ public def main (args : List String) : IO UInt32 := do
   runCases "downstream"
       #[{ name := "plugin-build", run := Downstream.testPluginBuild ctx },
         { name := "facet-resolution", run := Downstream.testFacetResolution ctx },
+        { name := "server-artifact-invalidation", run := Downstream.testServerArtifactInvalidation ctx },
         { name := "cross-package-exe", run := Downstream.testCrossPackageExe ctx },
         { name := "artifact-authority", run := Downstream.testArtifactAuthority ctx },
         { name := "lint-driver", run := Downstream.testLintDriver ctx },

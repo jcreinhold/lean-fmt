@@ -252,13 +252,12 @@ private def slice (source : String) (range : SourceRange) : String :=
 private def isDocSyntax (kind : Lean.Name) : Bool :=
   kind == ``Lean.Parser.Command.docComment || kind == ``Lean.Parser.Command.moduleDoc
 
--- A comment has no interior layout. Lean's derived formatter spells a doc comment as its opening
--- token, a `Format.line`, and its body, so at a narrow width it would break a comment across the
--- separator its source never had. The whole comment is therefore one exact island covering both
--- terminals, and the marker replaces the body: the island's own bytes are the only rendering.
-private def docSyntaxBody? (stx : Lean.Syntax) : Option Lean.Syntax := do
-  guard (isDocSyntax stx.getKind)
-  stx.getArgs[1]?
+-- Lean 4.36's plain and Verso formatters both require a structured body. Present a
+-- plain body for either input, with the marker in the closing delimiter slot so it
+-- is emitted last. The island then restores the opener, body and closer together.
+private def docMarkerBody (marker : String) : Lean.Syntax :=
+  let closer := Lean.Syntax.node .none `«-/» #[.atom .none marker]
+  .node .none ``Lean.Parser.Command.commentBody #[.atom .none "", closer]
 
 private partial def terminalsFrom (source : String) (stx : Lean.Syntax)
     (result : Array Terminal := #[]) : Array Terminal :=
@@ -569,11 +568,11 @@ private partial def protectSourceDataFrom (categories : Lean.Parser.ParserCatego
     | none => { stx }
   | .node info kind children =>
     let stx := Lean.Syntax.node info kind children
-    if let some body := docSyntaxBody? stx then
+    if isDocSyntax kind && 1 < children.size then
       match sourceRange? stx with
       | some range =>
         let marker := markerFor range
-        { stx := .node info kind (children.set! 1 (.atom body.getHeadInfo marker))
+        { stx := .node info kind (children.set! 1 (docMarkerBody marker))
           islands := #[{ marker, range, text := slice source range, comment := true }] }
       | none => { stx }
     else
@@ -3666,8 +3665,8 @@ private def transformOrdinaryText (value : String) :
     --
     -- The boundary in *front* of the island is not one of those, and it is claimed here because this
     -- leaf is where the island's first terminal is reached whenever the document spells one of its
-    -- tokens before the marker. `docSyntaxBody?` protects a doc comment by replacing its body and
-    -- leaving `/--` a leaf of its own, so a docstring on an interior declaration always arrives this
+    -- tokens before the marker. The doc marker protects the whole comment while
+    -- leaving `/--` a leaf of its own, so a docstring on an interior declaration arrives this
     -- way: the entry was recorded, `insideIsland` then held, and the boundary the doc rule collected
     -- at that terminal could never be applied by anyone. `Mathlib/Tactic/CasesM.lean`'s `where` binding
     -- reported this as `applied 4/5 boundaries`.
@@ -4279,12 +4278,9 @@ private def CommandPlan.resolve (source : String) (terminals : Array Terminal)
   -- never be inserted either. Every collected comment must be inserted or the command is refused,
   -- which is how a doc comment took `MathlibTest/Tactic/DuplicateDecls.lean` down.
   --
-  -- `Lean.Parser.Command.docComment` is where this arises on ordinary source, and it is not a
-  -- mis-lex: the node is a three-byte `"/--"` token followed by a separately raw-lexed body, so Lean
-  -- runs `whitespace` after the token, and `whitespace` consumes `--` line comments. A payload line
-  -- beginning with `--` is genuinely that token's trailing trivia -- Lean's own `findDocString?`
-  -- drops it too -- and `protectSourceDataFrom` then wraps the whole node in an island that spells
-  -- those same bytes.
+  -- Before Lean 4.36, the doc-comment opener's trailing trivia could contain a payload
+  -- line beginning with `--`. The new opener keeps that line in the comment body.
+  -- Exact islands still own every byte within their range, including any inner trivia.
   --
   -- Strict on the left like the boundary settle: a comment starting where the island starts is the
   -- island's own opener, not something inside it.

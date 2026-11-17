@@ -22,6 +22,7 @@ identities include the toolchain, so earlier cached results are recomputed.
 - The compiler artifact facet uses Lake's `irArts` name in place of its deprecated
   `leanArts` alias, preserving the same module-artifact dependency.
 - The reviewed native-format region matches Lean 4.36 without a body change.
+- The formatter preserves complete plain and Verso doc comments under Lean 4.36’s parser.
 - The manual uses the matching Verso 4.36 release.
 
 ## 4.35.0 — 2026-10-13

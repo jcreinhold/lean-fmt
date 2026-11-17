@@ -38,7 +38,8 @@ private def summarize (root : System.FilePath) (application : String) (setup : S
   let report ← analyzeExact root application setup source display "3" (viaLakeEnv := true)
   commentSummary report display
 
-/-- The summary's exact shape: counts plus the payload digest, pinned. -/
+/-- Pin counts and the digest of comment bytes and owner spans. Lean 4.36 separates doc
+comment text from its closing delimiter, changing the owners' syntax kinds and ranges. -/
 private def ensureSummary (summary : Lean.Json) (label : String)
     (comments leading trailing dangling suppressed : Nat) (digest : String) : IO Unit := do
   for (key, expected) in
@@ -53,7 +54,7 @@ private def testOwnershipFixture (root : System.FilePath) (application : String)
   writeFile fixture ownershipSource
   let summary ← summarize root application setup fixture.toString "Ownership.lean"
   ensureSummary summary "ownership" 10 7 2 1 2
-      "aeac5503e51c2284f134eaa98da9f9eafe18b2103a2bebc0261ea6b87a7510aa"
+      "448fb11c0847aeeb18a5b95638e09f2aedaee003bb234ec53868aa983da9cbad"
 
 /-- CRLF normalization preserves the whole ownership summary, digest included. -/
 private def testCrlfIdentical (root : System.FilePath) (application : String)
@@ -75,7 +76,7 @@ private def testLocalSyntax (root : System.FilePath) (application : String)
     summarize root application setup "tests/fixtures/compiler/LocalSyntax.lean"
         "tests/fixtures/compiler/LocalSyntax.lean"
   ensureSummary summary "local-syntax" 6 5 1 0 0
-      "e0e388ff4e428c9b7892288a3b908ae25640f0797eb1d18a1d17fc5cd99481e7"
+      "7ad9bc747f5e97bccb3d779d7c0567cf351b82a251c51701eb96a7502a73942f"
 
 /-- Structural comment layout across constructs, widths, and line endings: thirteen exact payloads
 retain one logical owner through both of admission's readings of the module, and the contract is
@@ -88,7 +89,7 @@ private def testLayoutWidths (root : System.FilePath) (application : String)
         "tests/fixtures/comments/Layout.lean" "3" (viaLakeEnv := true)
   let summary ← commentSummary summaryReport "layout"
   ensureSummary summary "layout" 13 8 5 0 0
-      "274997ea206091bf77ee03b20c21942d8b31e495a8a687e0d93fd93e141a9a7d"
+      "0ec97281d519c5f147362dc0c41f0c9416f5c37623c7d27b258f986cff0f0660"
   let payloads :=
     ["/- before import -/", "/-! Module documentation remains one complete lexical command. -/",
       "/- before macro alternative -/", "/- between binders -/", "/- before operator -/",

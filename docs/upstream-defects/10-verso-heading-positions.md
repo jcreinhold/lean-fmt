@@ -1,5 +1,8 @@
 # 10. A Verso heading spells three leaves with no source position
 
+**Fixed in Lean 4.36.** The parser now represents headings with `Block.header` and a
+positioned `headerMarker`. The independent lossless oracle tiles the original fixture.
+
 Not a pretty-printer defect — a parser defect. Verso's concrete syntax is not Lean's, so its docstring parser builds
 document nodes out of atoms that appear nowhere in the source: a paragraph is `para{ … }`, a heading is
 `header( level ) { … }`. Those atoms still get *positions* — zero-width where they have to be — which is what lets a
@@ -71,13 +74,13 @@ original position, so any file with a Verso heading was refused outright — `re
 `MathlibTest/Linter/Header/Verso.lean` was the one file in mathlib4's 8,862 that `lean-fmt` could not format at all. The
 2026-08-14 run reports it `would-format` with zero degradations, and `rejected` 0 across the corpus.
 
-`LeafInfo.absent`, `Token.positioned` and the three walks that consult it (`LeanFmt/LosslessSource.lean`,
-`LeanFmt/Suppression.lean`) are what a fix upstream would let us delete. A leaf that spells no bytes takes no part in a
-tiling over bytes; that is a true statement about any parser, so the mechanism is defensible on its own terms and is not
-merely a workaround. The part that *is* a workaround is `leadingStart` having to skip absent predecessors to recover
-byte 34 — and that repair already existed, for §11.
+`LeafInfo.absent` and `Token.positioned` express the byte-tiling contract for syntax leaves
+without positions. The projection and suppression walks skip those leaves, and leading-trivia
+recovery uses the last positioned predecessor. The separate stranded-trivia recovery in §11
+still has its own expiry check.
 
 ## Pinned by
 
-The `lossless` suite's `verso-heading` case asserts both halves: the projection covers the byte, and the independent
-oracle still reports the leaves positionless. No `Probe.lean` row — nothing here is formatted.
+
+The `lossless` suite's `verso-heading` case now requires the independent oracle to tile the
+fixture. The historical reproduction above describes Lean 4.35.

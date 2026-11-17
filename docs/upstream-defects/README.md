@@ -3,7 +3,7 @@
 Eleven Lean toolchain defects, one file each, with a reproduction that needs only the toolchain —
 no Mathlib, no `lean-fmt` — so each can be pasted into a `leanprover/lean4` issue as-is. §§1–9 are
 pretty-printer defects (`formatCommand` throws or emits wrong bytes); §§10–11 are parser defects
-(leaves with wrong or missing source positions); [§12](12-residue.md) is the measurement residue
+(leaves with wrong or missing source positions). Lean 4.36 fixed §10. [§12](12-residue.md) records measurements
 neither group explains.
 
 | file | defect | what it does | why it's a bug |
@@ -47,8 +47,8 @@ reason for is a mechanism nobody dares remove.
 The `upstream-defects` suite (`tests/Suites/UpstreamDefects.lean`) runs the probe and asserts each
 defect **still reproduces** — every other suite asserts lean-fmt behaves correctly, which stays
 true whether or not the defect underneath is still there. A defect that stops reproducing fails
-that suite with the mechanism it lets us delete named in the message. §§10–11 expire the same way
-through the `lossless` suite.
+that suite with the mechanism it lets us delete named in the message. The `lossless` suite now requires the §10 fixture to tile. Its
+§11 case still checks whether the parser strands a byte.
 
 Measured 2026-08-13/14 against `leanprover/lean4:v4.34.0-rc1`, corpus figures from mathlib4 at
 `4a9d59a1cc`. A measurement has a date, not authority — regenerate rather than argue.

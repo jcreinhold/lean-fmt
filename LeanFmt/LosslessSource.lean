@@ -59,9 +59,7 @@ positions as real ones: both claim a span, and neither earned it.
 
 `absent` is the fourth answer and the only other one a projection can hold. The parser recorded no
 position at all, so the leaf spells *no* bytes and claims none — it cannot break a tiling it takes
-no part in. A Verso heading is where this arises on ordinary source: `Doc.Syntax.header` is built
-from six atoms, of which `header(` and `}` carry the positions of the `#` and the heading's end,
-while the level literal, `)` and `{` carry nothing, there being no source token for the level. -/
+no part in. -/
 inductive LeafInfo where
   | original
   | synthetic
@@ -324,10 +322,8 @@ the run's content the same way is what makes the contract true rather than merel
 guard keeps this a no-op whenever the parser is well behaved -- then the cursor *is* the token's own
 start -- and refuses to trust a predecessor whose own positions the projection will reject anyway.
 
-The predecessor is the last leaf that *spells bytes*, not the last leaf pushed. An absent leaf
-stops at zero, so taking it as the predecessor fails the guard and leaves the recovery undone: a
-Verso heading is three absent leaves deep, and the space between `#` and the heading text ends up
-on no leaf at all. -/
+The predecessor must spell bytes. An absent leaf stops at zero, so using it as the
+predecessor defeats the guard and can leave trivia unclaimed. -/
 private def leadingStart (previous? : Option Token) (recorded : String.Pos.Raw) : String.Pos.Raw :=
   match previous? with
   | some previous =>

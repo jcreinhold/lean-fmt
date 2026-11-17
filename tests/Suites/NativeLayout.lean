@@ -746,7 +746,7 @@ assertion on its own, so it is paired: `application-formatter`'s `degraded-is-cl
 `miss-set-convergence` pin both names *present*, at `verbatim_commands=1`/`3` and `draft_retry=1`.
 Renaming a counter turns those red, so absence here cannot pass by spelling. -/
 private def testIslandComment (ctx : Ctx) : IO Unit := do
-  -- The payload as measured: a first line the lexer takes as trivia, then a body Lean does keep.
+  -- Before Lean 4.36 the lexer took the first line as trivia. The whole payload must survive.
   let payload := "/--\n-- Foo.Bar\n\nbaz : Nat\n-/\n"
   -- `\\n` reaches the fixture as the two characters Lean's own escape needs, so the message
   -- `#eval` prints is the payload `#guard_msgs` compares against.

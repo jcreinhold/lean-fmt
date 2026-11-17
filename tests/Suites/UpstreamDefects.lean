@@ -15,10 +15,10 @@ That failure is the good kind. The weekly `next-toolchain` probe says something 
 cannot say whether upstream broke us or fixed something we pay for. This suite is that
 discriminator, so every message here names the mechanism to delete and the section to rewrite.
 
-Scope is §§1-9, the pretty-printer defects, which have no other expiry signal. §§10-11 are parser
-defects and the `lossless` suite's `stranded-trivia` and `verso-heading` cases already assert both
-halves of each — the projection covers the byte, the independent oracle still reports it missing —
-so a fix upstream already turns those red. §12 is residue: no reproduction, nothing to delete.
+Scope is §§1-9, the pretty-printer defects, which have no other expiry signal. The `lossless`
+suite checks the parser defects separately: the `verso-heading` fixture now tiles with Lean 4.36
+(§10), and `stranded-trivia` still expects a hole in the parser's attribution (§11).
+§12 records historical measurements.
 
 `tests/fixtures/upstream-defects/Probe.lean` is the reproduction, run once by `main`; this file is
 the expectation. The split matters: the fixture must be runnable by hand exactly as
