@@ -63,10 +63,11 @@ private def testServerArtifactInvalidation (ctx : Ctx) : IO Unit :=
     let facet := #["build", "+Consumer.Basic:leanFmtArtifact"]
     let check (disableArtifact : Bool := false) : IO ProcResult :=
       lakeAny ctx
-          #["exe", "lean-fmt", "check", "--root", ".", "--json", "--no-cache",
-            "--preview", "--select", "FMT010", "Consumer/Basic.lean"]
-          (env := #[("LEAN_FMT_PROFILE_PHASES", some "1"),
-            ("LEAN_FMT_DISABLE_ARTIFACT", if disableArtifact then some "1" else none)])
+        #["exe", "lean-fmt", "check", "--root", ".", "--json", "--no-cache", "--preview",
+          "--select", "FMT010", "Consumer/Basic.lean"]
+        (env :=
+        #[("LEAN_FMT_PROFILE_PHASES", some "1"),
+          ("LEAN_FMT_DISABLE_ARTIFACT", if disableArtifact then some "1" else none)])
     let expectRoute (result : ProcResult) (hit : Bool) : IO Unit := do
       let route := if hit then "hit" else "miss"
       let profile := result.stderr.splitOn "\n"
@@ -222,7 +223,8 @@ public def main (args : List String) : IO UInt32 := do
   runCases "downstream"
       #[{ name := "plugin-build", run := Downstream.testPluginBuild ctx },
         { name := "facet-resolution", run := Downstream.testFacetResolution ctx },
-        { name := "server-artifact-invalidation", run := Downstream.testServerArtifactInvalidation ctx },
+        { name := "server-artifact-invalidation",
+          run := Downstream.testServerArtifactInvalidation ctx },
         { name := "cross-package-exe", run := Downstream.testCrossPackageExe ctx },
         { name := "artifact-authority", run := Downstream.testArtifactAuthority ctx },
         { name := "lint-driver", run := Downstream.testLintDriver ctx },
