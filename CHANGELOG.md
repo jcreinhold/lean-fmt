@@ -19,7 +19,9 @@ Use `v4.36.0-fmt.1` with `leanprover/lean4:v4.36.0`.
 - The macOS release tests accept valid inherited session IDs, including session ID 1,
   and print the observed IDs if a process isolation check fails.
 
-## 4.36.0 — 2026-11-17
+## 4.36.0 — 2026-11-18
+
+The stable release includes the macOS release-test repair from `v4.36.0-fmt.1`.
 
 ### Upgrading
 
