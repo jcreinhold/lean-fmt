@@ -2,6 +2,9 @@ module
 
 public import Test
 
+import all LeanFmt.Discovery
+import all LeanFmt.Project
+
 /-!
 # The LSP suite
 
@@ -290,6 +293,34 @@ private def testDocumentAdmission (ctx : Ctx) : IO Unit := do
         "refusal-once"
   ensureEq "the refusal is announced once" 1
       (notificationsOf onceMessages "window/showMessage").size
+
+private def testWindowsDriveLetter (ctx : Ctx) : IO Unit := do
+  if !System.Platform.isWindows then return
+  let root := ctx.root.normalize
+  if !((root.toString.chars.take 2).toList matches [_, ':']) then
+    throw <| IO.userError "drive-letter regression needs a drive-backed test checkout"
+  let lowerRoot : System.FilePath := ⟨root.toString.decapitalize⟩
+  let workspace ← LeanFmt.Internal.Project.loadWorkspace root
+  let discovery ← LeanFmt.Internal.Discovery.run root none
+  let saved := root / "tests" / "fixtures" / "check" / "Findings.lean"
+  let unsaved := root / "tests" / "fixtures" / "check" / "UnsavedDriveLetter.lean"
+  ensure (← saved.pathExists) "the saved fixture exists"
+  ensure (!(← unsaved.pathExists)) "the unsaved fixture has no disk path"
+  for (path, relative) in [(saved, "Findings.lean"), (unsaved, "UnsavedDriveLetter.lean")] do
+    let uri := System.Uri.pathToUri path
+    let some decoded := System.Uri.fileUriToPath? uri
+      | throw <| IO.userError "the file URI did not decode"
+    let target ← LeanFmt.Internal.Project.unsavedTarget workspace discovery lowerRoot
+      decoded.toString "def x := 1\n" (spelling? := some uri)
+    ensureEq "drive normalization preserves target filename" (some relative) target.path.fileName
+  let outside := root / ".." / "OutsideDriveLetter.lean"
+  let result ←
+    try
+      discard <| LeanFmt.Internal.Project.unsavedTarget workspace discovery lowerRoot
+        outside.toString ""
+      pure ""
+    catch error => pure error.toString
+  ensure (result.contains "outside the project root") "a true outside-root path stays refused"
 
 private def testVersionsSync (ctx : Ctx) : IO Unit := do
   let uri := findingsUri ctx
@@ -711,6 +742,7 @@ public def main (args : List String) : IO UInt32 := do
           { name := "malformed-recovery", run := Lsp.testMalformedRecovery ctx },
           { name := "unknown-methods", run := Lsp.testUnknownMethods ctx },
           { name := "document-admission", run := Lsp.testDocumentAdmission ctx },
+          { name := "windows-drive-letter", run := Lsp.testWindowsDriveLetter ctx },
           { name := "versions-sync", run := Lsp.testVersionsSync ctx },
           { name := "close-clears", run := Lsp.testCloseClears ctx },
           { name := "cancellation", run := Lsp.testCancellation ctx },

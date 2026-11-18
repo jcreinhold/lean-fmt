@@ -1708,29 +1708,35 @@ too, as black's does.
 Which slot holds the trailing comma differs by parser: `#[a, b,]` keeps it an odd separator slot
 of the list, while `(a, b,)` nests the tail of the list one `null` deeper. The test is therefore
 the *last leaf* of the item list, which both shapes spell the same way, and the elements are the
-even slots' first leaves, descending a nested list (`explodedElementStarts`).
+even slots' first leaves, descending a nested list (`explodedElementRanges`).
 
 The element boundaries are `.hard`: unconditional, so the group's fit measurement cannot rejoin
 two elements, and cannot lengthen a row either -- exactly what a self-perpetuating layout needs.
 The closing bracket's is `.explodedClose`, whose dedent the walk spells; see `BoundaryLayout`.
 
-Returns the exploded collections' ranges beside the boundaries: the walk's `.nest` rewrite reads
+Returns the collection and item ranges beside the boundaries: the walk's `.nest` rewrite reads
 them to learn which nest is a collection's own (`TransformState.explodedSpans`). -/
-/-- First-leaf range of every element in a comma-`sepBy` list: the even slots. A tuple's list
+/-- First-leaf ranges and leading-dot application spans in a comma-`sepBy` list. A tuple's list
 nests its tail -- `` `(a, b, c) `` parses as `(null a "," (null b "," c))` -- so an even slot
 can itself be a list; the recursion descends one whose direct children hold separator atoms (a
 `null`-wrapped *item* never does, so it is not mistaken for a list). -/
-private partial def explodedElementStarts (list : Lean.Syntax) : Array SourceRange :=
+private partial def explodedElementRanges (list : Lean.Syntax) : Array (SourceRange × Option SourceRange) :=
   list.getArgs.zipIdx.foldl (init := #[]) fun starts (arg, index) =>
     if index % 2 == 1 then starts
     else
       if
           arg.isOfKind Lean.nullKind &&
             arg.getArgs.any fun child => child.isAtom && child.getAtomVal == "," then
-        starts ++ explodedElementStarts arg
+        starts ++ explodedElementRanges arg
       else
         match (selectedLeafRanges arg)[0]? with
-        | some range => starts.push range
+        | some first =>
+          let item :=
+            if arg.isOfKind ``Lean.Parser.Term.app &&
+                (arg.getArgs[0]?.any (·.isOfKind ``Lean.Parser.Term.dotIdent)) then
+              sourceRange? arg
+            else none
+          starts.push (first, item)
         | none => starts
 
 /- The row-spread explosion is retired (LAY-STRUCT-INST): the anchor interval on the fields list
@@ -1741,17 +1747,19 @@ pass placed -- is the anchor's own fit invisibility: the anchor re-bases breaks 
 document put the first field, so the second pass reads the same fact. -/
 
 private partial def collectTrailingCommaExplosions (stx : Lean.Syntax)
-    (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[]) :
-    Array SourceRange × Array (Nat × BoundaryLayout) :=
+    (ranges : Array SourceRange := #[]) (starts : Array (Nat × BoundaryLayout) := #[])
+    (items : Array (SourceRange × Option SourceRange) := #[]) :
+    Array SourceRange × Array (Nat × BoundaryLayout) × Array (SourceRange × Option SourceRange) :=
   match stx with
   | .node _ kind children =>
-    let (ranges, starts) :=
+    let (ranges, starts, items) :=
       match explodedCollectionList? stx with
       | some list =>
         match lastLeaf? list with
         | some (.atom _ ",") =>
+          let elementRanges := explodedElementRanges list
           let starts :=
-            (explodedElementStarts list).foldl (init := starts) fun starts range =>
+            elementRanges.foldl (init := starts) fun starts (range, _) =>
               if starts.any (·.1 == range.start) then starts
               else starts.push (range.start, BoundaryLayout.hard)
           match lastLeaf? stx with
@@ -1761,15 +1769,15 @@ private partial def collectTrailingCommaExplosions (stx : Lean.Syntax)
               let starts :=
                 if starts.any (·.1 == bracketRange.start) then starts
                 else starts.push (bracketRange.start, BoundaryLayout.explodedClose)
-              (ranges.push collectionRange, starts)
-            | _, _ => (ranges, starts)
-          | none => (ranges, starts)
-        | _ => (ranges, starts)
-      | none => (ranges, starts)
+              (ranges.push collectionRange, starts, items ++ elementRanges)
+            | _, _ => (ranges, starts, items)
+          | none => (ranges, starts, items)
+        | _ => (ranges, starts, items)
+      | none => (ranges, starts, items)
     let children := if kind == Lean.choiceKind then children[0]?.toArray else children
-    children.foldl (init := (ranges, starts)) fun (ranges, starts) child =>
-      collectTrailingCommaExplosions child ranges starts
-  | _ => (ranges, starts)
+    children.foldl (init := (ranges, starts, items)) fun (ranges, starts, items) child =>
+      collectTrailingCommaExplosions child ranges starts items
+  | _ => (ranges, starts, items)
 
 /- The brace argument of a `return` keeps the keyword's row.
 
@@ -4714,9 +4722,9 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
           if brokenBefore doc.start then BoundaryLayout.dedented else BoundaryLayout.elided)
   -- The magic trailing comma, collected only under `respect`: under `ignore` the trailing comma
   -- is inert layout evidence and no boundaries come of it.
-  let (commaRanges, trailingCommaBoundaries) :=
+  let (commaRanges, trailingCommaBoundaries, explodedItems) :=
     if format.magicTrailingComma == .respect then collectTrailingCommaExplosions stripped
-    else (#[], #[])
+    else (#[], #[], #[])
   -- The closing brace's own row decision (`collectStructInstCloseBraces`): its ranges join
   -- `explodedRanges` only at the `transform` call, after the pin filter has run.
   let (closeBraceBoundaries, closeBraceRanges) :=
@@ -4729,6 +4737,11 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
     (collectReturnBraceStarts stripped).filter fun start => !brokenBefore start
   -- What each boundary's terminal heads, for the hoist's privacy test (`Transformed.hoist?`).
   let headSpans := collectHeadSpans terminals stripped
+  -- A generated item break belongs outside the item's private nests. A leading-dot
+  -- application's smallest multi-token head is only `.a`, which omits its outer app nest.
+  let itemSpans := explodedItems.filterMap fun (first, item) =>
+    item.map fun range => ((spanForRange terminals first).start, spanForRange terminals range)
+  let headSpans := itemSpans ++ headSpans
   -- Inside an exploded collection the source-column pins are dropped: explosion and the pins
   -- answer the same question (one element per row), the pin's column is stale once the collection
   -- explodes, and `boundaryTable` refuses a `.hard`/`.columned` disagreement at one terminal.

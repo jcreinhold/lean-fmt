@@ -299,7 +299,9 @@ moves. Every path-taking caller passes `none` and reads as before. -/
 def unsavedTarget (workspace : Lake.Workspace) (discovery : Discovery.Discovery) (root : FilePath)
     (argument : String) (source : String) (spelling? : Option String := none) : IO SourceTarget :=
   do
-  let written := FilePath.mk argument
+  -- A Windows file URI and realPath can spell the same drive letter differently.
+  let root := root.normalize
+  let written := (FilePath.mk argument).normalize
   let spelling := spelling?.getD argument
   let candidate := resolveLexically (if written.isAbsolute then written else root / written)
   unless insideRoot root candidate do

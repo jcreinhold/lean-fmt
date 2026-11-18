@@ -99,6 +99,30 @@ jobs:
           LEAN_FMT_DEBUG_CACHE: "1"
         timeout-minutes: 20
 
+  windows-drive-letter:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      LEAN_NUM_THREADS: "2"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: leanprover/lean-action@v1
+        with:
+          auto-config: "false"
+          build: "false"
+          lint: "false"
+          test: "false"
+      - name: Check Windows document admission
+        shell: pwsh
+        run: |
+          $output = lake exe suite-lsp --filter windows-drive-letter
+          $code = $LASTEXITCODE
+          $output | Write-Output
+          if ($code -ne 0) { exit $code }
+          if ($output -notcontains 'lsp: 1 test(s) passed') {
+            throw 'Expected one passing Windows drive-letter test'
+          }
+
   slow:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
