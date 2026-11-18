@@ -115,7 +115,13 @@ jobs:
       - name: Check Windows document admission
         shell: pwsh
         run: |
-          $output = lake exe suite-lsp --filter windows-drive-letter
+          $elanBin = Join-Path $env:USERPROFILE '.elan\bin'
+          $lake = Join-Path $elanBin 'lake.exe'
+          if (!(Test-Path -LiteralPath $lake -PathType Leaf)) {
+            throw "Lean setup did not install $lake"
+          }
+          $env:Path = "$elanBin;$env:Path"
+          $output = & $lake exe suite-lsp --filter windows-drive-letter
           $code = $LASTEXITCODE
           $output | Write-Output
           if ($code -ne 0) { exit $code }
