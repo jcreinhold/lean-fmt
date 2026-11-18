@@ -38,12 +38,15 @@ jobs:
   # before spending three full test runs.
   verify-tag:
     runs-on: ubuntu-latest
+    outputs:
+      repair: ${{ steps.verify.outputs.repair }}
     steps:
       - uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ env.TAG }}
 
       - name: tag names the toolchain and formatter version
+        id: verify
         shell: bash
         run: |
           compatible_tag() {
@@ -77,6 +80,11 @@ jobs:
             echo "lakefile version $version does not match tag ${TAG#v}" >&2
             exit 1
           fi
+          repair=false
+          if [[ "$TAG" != "$toolchain" ]]; then
+            repair=true
+          fi
+          echo "repair=$repair" >> "$GITHUB_OUTPUT"
           echo "tag $TAG, toolchain $toolchain, version $version"
 
   gate:
@@ -116,9 +124,15 @@ jobs:
       # cache epoch names its component in the failure digest (ubuntu-22.04 grew a second
       # index here that no other platform grew).
       - name: test
-        run: lake test
         env:
+          REPAIR: ${{ needs.verify-tag.outputs.repair }}
           LEAN_FMT_DEBUG_CACHE: "1"
+        run: |
+          if [ "$REPAIR" = true ]; then
+            LEAN_NUM_THREADS=2 lake test -- --all --jobs 1
+          else
+            lake test
+          fi
 
       # What a consumer's `lake exe lean-fmt` will do on this platform, exercised through the real
       # frontend child rather than argument parsing alone.
@@ -129,7 +143,7 @@ jobs:
           .lake/build/bin/lean-fmt check LeanFmt.lean
 
   publish:
-    needs: gate
+    needs: [verify-tag, gate]
     runs-on: ubuntu-latest
 
     steps:
@@ -139,6 +153,13 @@ jobs:
           # No checkout in this job: without a repository hint, gh infers the repo from a git
           # remote that does not exist here and dies with "not a git repository".
           GH_REPO: ${{ github.repository }}
+          REPAIR: ${{ needs.verify-tag.outputs.repair }}
         run: |
-          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            if [ "$REPAIR" = true ]; then
+              gh release create "$TAG" --verify-tag --generate-notes --prerelease
+            else
+              gh release create "$TAG" --verify-tag --generate-notes
+            fi
+          fi
           gh release view "$TAG"

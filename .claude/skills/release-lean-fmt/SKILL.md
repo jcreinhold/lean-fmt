@@ -46,7 +46,8 @@ root and manual toolchain pins and the Verso pin aligned to the actual Lean rele
 The boundary suite checks that the package, CLI, and README versions agree. The workflow
 verifies that the release tag matches the package version and names the pinned compiler.
 Lake orders `4.36.0-fmt.1` below `4.36.0` as a prerelease version. Consumers should pin the
-exact Git tag. GitHub's prerelease flag is separate from Lake's version ordering.
+exact Git tag. The workflow marks formatter-only repairs as GitHub prereleases and runs all suites on each
+of the three release platforms.
 
 ### 3. CHANGELOG
 
