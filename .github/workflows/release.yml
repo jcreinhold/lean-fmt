@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ env.TAG }}
+          ref: refs/tags/${{ env.TAG }}
 
       - name: tag names the toolchain and formatter version
         shell: bash
@@ -90,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ env.TAG }}
+          ref: refs/tags/${{ env.TAG }}
       - uses: leanprover/lean-action@v1
         with:
           # Build and lint only: auto-config would also run `lake test` inside the action, and
@@ -140,5 +140,5 @@ jobs:
           # remote that does not exist here and dies with "not a git repository".
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --generate-notes
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes
           gh release view "$TAG"
