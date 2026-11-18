@@ -99,6 +99,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: refs/tags/${{ env.TAG }}
+          # The ci suite clones this tagged commit into a consuming project.
+          fetch-depth: 0
       - uses: leanprover/lean-action@v1
         with:
           # Build and lint only: auto-config would also run `lake test` inside the action, and
@@ -129,7 +131,26 @@ jobs:
           LEAN_FMT_DEBUG_CACHE: "1"
         run: |
           if [ "$REPAIR" = true ]; then
-            LEAN_NUM_THREADS=2 lake test -- --all --jobs 1
+            # Performance and security-bench invoke this separate executable.
+            LEAN_NUM_THREADS=2 lake build lean-fmt-tests
+            set -o pipefail
+            log="$RUNNER_TEMP/lean-fmt-release-test.log"
+            if LEAN_NUM_THREADS=2 lake test -- --all --jobs 1 2>&1 | tee "$log"; then
+              exit 0
+            else
+              status=$?
+            fi
+            diagnostics="$(sed -n 's/^logs kept at //p' "$log" | tail -n 1)"
+            if [ -n "$diagnostics" ]; then
+              for suite in performance security-bench ci; do
+                file="$diagnostics/$suite.log"
+                if [ -f "$file" ]; then
+                  printf '\n--- %s full diagnostics ---\n' "$suite"
+                  cat "$file"
+                fi
+              done
+            fi
+            exit "$status"
           else
             lake test
           fi
@@ -161,5 +182,10 @@ jobs:
             else
               gh release create "$TAG" --verify-tag --generate-notes
             fi
+          fi
+          if [ "$REPAIR" = true ] &&
+              [ "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" != true ]; then
+            echo "release $TAG must be marked as a prerelease" >&2
+            exit 1
           fi
           gh release view "$TAG"
