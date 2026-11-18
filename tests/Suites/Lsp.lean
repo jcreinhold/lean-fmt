@@ -295,7 +295,8 @@ private def testDocumentAdmission (ctx : Ctx) : IO Unit := do
       (notificationsOf onceMessages "window/showMessage").size
 
 private def testWindowsDriveLetter (ctx : Ctx) : IO Unit := do
-  if !System.Platform.isWindows then return
+  if !System.Platform.isWindows then
+    return
   let root := ctx.root.normalize
   if !((root.toString.chars.take 2).toList matches [_, ':']) then
     throw <| IO.userError "drive-letter regression needs a drive-backed test checkout"
@@ -310,16 +311,18 @@ private def testWindowsDriveLetter (ctx : Ctx) : IO Unit := do
     let uri := System.Uri.pathToUri path
     let some decoded := System.Uri.fileUriToPath? uri
       | throw <| IO.userError "the file URI did not decode"
-    let target ← LeanFmt.Internal.Project.unsavedTarget workspace discovery lowerRoot
-      decoded.toString "def x := 1\n" (spelling? := some uri)
+    let target ←
+      LeanFmt.Internal.Project.unsavedTarget workspace discovery lowerRoot decoded.toString
+          "def x := 1\n" (spelling? := some uri)
     ensureEq "drive normalization preserves target filename" (some relative) target.path.fileName
   let outside := root / ".." / "OutsideDriveLetter.lean"
   let result ←
     try
-      discard <| LeanFmt.Internal.Project.unsavedTarget workspace discovery lowerRoot
-        outside.toString ""
+      discard <|
+          LeanFmt.Internal.Project.unsavedTarget workspace discovery lowerRoot outside.toString ""
       pure ""
-    catch error => pure error.toString
+    catch error =>
+      pure error.toString
   ensure (result.contains "outside the project root") "a true outside-root path stays refused"
 
 private def testVersionsSync (ctx : Ctx) : IO Unit := do

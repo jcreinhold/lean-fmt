@@ -1720,7 +1720,8 @@ them to learn which nest is a collection's own (`TransformState.explodedSpans`).
 nests its tail -- `` `(a, b, c) `` parses as `(null a "," (null b "," c))` -- so an even slot
 can itself be a list; the recursion descends one whose direct children hold separator atoms (a
 `null`-wrapped *item* never does, so it is not mistaken for a list). -/
-private partial def explodedElementRanges (list : Lean.Syntax) : Array (SourceRange × Option SourceRange) :=
+private partial def explodedElementRanges (list : Lean.Syntax) :
+    Array (SourceRange × Option SourceRange) :=
   list.getArgs.zipIdx.foldl (init := #[]) fun starts (arg, index) =>
     if index % 2 == 1 then starts
     else
@@ -1732,8 +1733,9 @@ private partial def explodedElementRanges (list : Lean.Syntax) : Array (SourceRa
         match (selectedLeafRanges arg)[0]? with
         | some first =>
           let item :=
-            if arg.isOfKind ``Lean.Parser.Term.app &&
-                (arg.getArgs[0]?.any (·.isOfKind ``Lean.Parser.Term.dotIdent)) then
+            if
+                arg.isOfKind ``Lean.Parser.Term.app &&
+                  (arg.getArgs[0]?.any (·.isOfKind ``Lean.Parser.Term.dotIdent)) then
               sourceRange? arg
             else none
           starts.push (first, item)
@@ -4739,8 +4741,9 @@ private def CommandPlan.collect (source : String) (ownership : CommentOwnership)
   let headSpans := collectHeadSpans terminals stripped
   -- A generated item break belongs outside the item's private nests. A leading-dot
   -- application's smallest multi-token head is only `.a`, which omits its outer app nest.
-  let itemSpans := explodedItems.filterMap fun (first, item) =>
-    item.map fun range => ((spanForRange terminals first).start, spanForRange terminals range)
+  let itemSpans :=
+    explodedItems.filterMap fun (first, item) =>
+      item.map fun range => ((spanForRange terminals first).start, spanForRange terminals range)
   let headSpans := itemSpans ++ headSpans
   -- Inside an exploded collection the source-column pins are dropped: explosion and the pins
   -- answer the same question (one element per row), the pin's column is stale once the collection

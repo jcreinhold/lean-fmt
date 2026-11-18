@@ -858,14 +858,16 @@ private def testBracketedSequences (ctx : Ctx) : IO Unit := do
   discard <| pure report
 
 private def testLeadingDotList (ctx : Ctx) : IO Unit := do
-  let args := #["format", "-", "--stdin-filename", "LeadingDotList.lean", "--root", ".", "--no-cache"]
+  let args :=
+    #["format", "-", "--stdin-filename", "LeadingDotList.lean", "--root", ".", "--no-cache"]
   let exact :=
     "inductive Foo\n  | a (_ : Nat)\n\nexample : List Foo :=\n  [\n    .a 0,\n    .a 1,\n  ]\n"
   let qualified := exact.replace ".a 0" "Foo.a 0"
   let noArguments := ((exact.replace " (_ : Nat)" "").replace ".a 0" ".a").replace ".a 1" ".a"
-  for (label, source) in [("leading dot", exact), ("qualified head", qualified),
-      ("no arguments", noArguments)] do
-    let result ← expectExit 0 label ctx.application args (input? := some source) (cwd? := some ctx.root)
+  for (label, source) in
+    [("leading dot", exact), ("qualified head", qualified), ("no arguments", noArguments)] do
+    let result ←
+      expectExit 0 label ctx.application args (input? := some source) (cwd? := some ctx.root)
     ensureEq s!"{label}: list items stay aligned" source result.stdout
 
 end NativeLayout
