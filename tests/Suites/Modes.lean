@@ -164,24 +164,52 @@ private def groupEnvironment (ctx : Ctx) (records : System.FilePath) (sleep : Bo
     ("LEAN_FMT_TEST_GROUP_SLEEP", some (if sleep then "1" else "0")),
     ("LEAN_FMT_DISABLE_ARTIFACT", some "1"), ("LEAN_FMT_TEST_DISABLE_MODULE_EVIDENCE", some "1")]
 
+private def ensureGroupRecord (row : Lean.Json) (inherited : Bool) : IO Unit := do
+  let pid := (((jsonAt? row [.field "pid"]).bind (·.getNat?.toOption)).getD 0)
+  let group := (((jsonAt? row [.field "group"]).bind (·.getNat?.toOption)).getD 0)
+  let parent := (((jsonAt? row [.field "parent_group"]).bind (·.getNat?.toOption)).getD 0)
+  let session := (((jsonAt? row [.field "session"]).bind (·.getNat?.toOption)).getD 0)
+  let parentSession := (((jsonAt? row [.field "parent_session"]).bind (·.getNat?.toOption)).getD 0)
+  -- A macOS process can inherit session ID 1 from launchd.
+  ensure (pid > 1 && group > 1 && parent > 1 && session > 0 && parentSession > 0)
+      s!"missing actual process identities: {row.compress}"
+  if inherited then
+    ensure (group == parent && session == parentSession)
+        s!"a managed frontend detached: {row.compress}"
+  else
+    ensure (group == pid && session == pid && group != parent)
+        s!"standalone isolation changed: {row.compress}"
+
 private def ensureGroups (records : System.FilePath) (inherited : Bool) (minimum : Nat) : IO Unit :=
   do
   let entries ← records.readDir
   ensure (entries.size >= minimum) "the controlled frontend did not run for every selected source"
   for entry in entries do
     let row ← parseJson (← IO.FS.readFile entry.path) "process group record"
-    let pid := (((jsonAt? row [.field "pid"]).bind (·.getNat?.toOption)).getD 0)
-    let group := (((jsonAt? row [.field "group"]).bind (·.getNat?.toOption)).getD 0)
-    let parent := (((jsonAt? row [.field "parent_group"]).bind (·.getNat?.toOption)).getD 0)
-    let session := (((jsonAt? row [.field "session"]).bind (·.getNat?.toOption)).getD 0)
-    let parentSession :=
-      (((jsonAt? row [.field "parent_session"]).bind (·.getNat?.toOption)).getD 0)
-    ensure (pid > 1 && group > 1 && parent > 1 && session > 1 && parentSession > 1)
-        "missing actual process identities"
-    if inherited then
-      ensure (group == parent && session == parentSession) "a managed frontend detached"
-    else
-      ensure (group == pid && session == pid && group != parent) "standalone isolation changed"
+    ensureGroupRecord row inherited
+
+private def testManagedGroupRecords : IO Unit := do
+  let standalone := r#"{"pid":42,"group":42,"parent_group":10,"session":42,"parent_session":1}"#
+  let inherited := r#"{"pid":42,"group":10,"parent_group":10,"session":1,"parent_session":1}"#
+  ensureGroupRecord (← parseJson standalone "standalone SID 1 parent") false
+  ensureGroupRecord (← parseJson inherited "inherited SID 1") true
+  for (raw, inheritGroup, expected) in
+    [(standalone.replace ",\"parent_session\":1" "", false, "missing actual process identities"),
+      (inherited.replace "\"session\":1" "\"session\":0", true,
+        "missing actual process identities"),
+      (inherited.replace "\"session\":1" "\"session\":2", true, "a managed frontend detached"),
+      (inherited.replace "\"group\":10" "\"group\":11", true, "a managed frontend detached"),
+      (standalone.replace "\"session\":42" "\"session\":1", false,
+        "standalone isolation changed")] do
+    let row ← parseJson raw "invalid process group record"
+    let failure ←
+      try
+        ensureGroupRecord row inheritGroup
+        pure ""
+      catch error =>
+        pure (toString error)
+    ensureContains failure expected "process group regression"
+    ensureContains failure row.compress "process group diagnostic omitted the record"
 
 private def testManagedGroups (ctx : Ctx) : IO Unit := do
   let beforeLayout ← metadataLine ctx.layout
@@ -1291,6 +1319,7 @@ public def main (args : List String) : IO UInt32 := do
       let cases : Array Case :=
         #[{ name := "no-build-policy", run := Modes.testNoBuildPolicy ctx },
           { name := "no-build-surfaces", run := Modes.testNoBuildUnsupportedSurfaces ctx },
+          { name := "managed-group-records", run := Modes.testManagedGroupRecords },
           { name := "managed-groups", run := Modes.testManagedGroups ctx },
           { name := "managed-group-rejections", run := Modes.testManagedGroupRejections ctx },
           { name := "managed-group-timeout", run := Modes.testManagedGroupTimeout ctx },
