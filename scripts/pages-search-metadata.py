@@ -47,7 +47,7 @@ def main() -> None:
             html = CONTENTS_SECTION.sub("", html)
         if 'name="description"' in html:
             continue
-        anchor = '<meta charset="utf-8">'
+        anchor = '<meta charset="utf-8"/>'
         if anchor not in html:
             raise SystemExit(f"{page}: no {anchor} anchor to inject after")
         tags = (
