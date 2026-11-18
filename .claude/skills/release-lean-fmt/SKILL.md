@@ -1,14 +1,14 @@
 ---
 name: release-lean-fmt
-description: Cut a lean-fmt release — one tag per toolchain, named exactly as lean-toolchain (v4.34.0-rc1, not semver). Use when releasing lean-fmt, cutting or pushing a release tag, updating the version in lakefile.lean and LeanFmt/Basic.lean, writing the CHANGELOG section for a toolchain, or recovering from a failed release run.
+description: Cut a lean-fmt release — toolchain tags and explicitly approved formatter-only repair tags. Use when releasing lean-fmt, cutting or pushing a release tag, updating the version in lakefile.lean and LeanFmt/Basic.lean, writing the CHANGELOG section for a toolchain, or recovering from a failed release run.
 ---
 
 # Release lean-fmt
 
-**The tag is the toolchain.** A release is tagged exactly as the `lean-toolchain` it was built against — `v4.34.0-rc1`,
-not a semantic version. A consumer requires the tag matching their own toolchain and never consults a compatibility
-table. That contract only holds because `.github/workflows/release.yml`'s `verify-tag` job asserts it; do not weaken
-that job.
+The first release for a Lean toolchain uses its exact tag. An explicitly approved formatter-only
+repair appends `-fmt.N`, with `N` a positive integer without leading zeros. For example,
+`v4.36.0-fmt.1` still requires Lean `v4.36.0`. The release verifier checks the exact toolchain
+prefix and matches the tag to the formatter version.
 
 **Nothing is packaged or uploaded.** There are no prebuilt binaries and no `install.sh`. lean-fmt is a Lake dependency
 built from source against the consumer's own compiler — which is what the plugin and the cache facet require anyway,
@@ -21,10 +21,8 @@ push as irreversible.
 
 ## When there is a release to cut
 
-One per toolchain, at the point the tree is good on it. Between toolchains there is no second version axis — a fix that
-lands after a tag is picked up by consumers pinning a commit SHA, or by the next toolchain's tag. Do not invent
-`v4.34.0-rc1-2`. If a fix genuinely cannot wait for the next Lean release, say so and decide deliberately; the answer is
-usually that Lean's cadence is faster than the wait.
+Use a commit SHA for an unreleased fix. If the user approves a formatter-only repair release,
+use the next `-fmt.N` tag and preserve existing tags.
 
 ## Steps
 
@@ -39,17 +37,16 @@ lake build && lake lint && lake test
 Run `lake test -- --all` if the candidate touches a slow suite's ground. The release workflow runs `lake test` on all
 three legs, so a failure you skipped locally costs a tag.
 
-### 2. Version — three places, all must agree
+### 2. Version
 
-The version string is the toolchain without its leading `v`. For `leanprover/lean4:v4.34.0-rc1` it is `4.34.0-rc1`. Set
-it in:
+The formatter version is the release tag without its leading `v`. Set it in `lakefile.lean`
+and `LeanFmt/Basic.lean`, and update the README dependency and install examples. Keep the
+root and manual toolchain pins and the Verso pin aligned to the actual Lean release.
 
-- `lean-toolchain` — the source of truth, moved by the `bump-toolchain` skill, not here
-- `lakefile.lean` — `version := v!"4.34.0-rc1"`
-- `LeanFmt/Basic.lean` — the literal `lean-fmt --version` prints
-
-The boundary suite's `package-identity` case ties the last two together; `verify-tag` ties them to `lean-toolchain` and
-to the tag. A half-updated version fails the release rather than shipping a binary that misreports itself.
+The boundary suite checks that the package, CLI, and README versions agree. The workflow
+verifies that the release tag matches the package version and names the pinned compiler.
+Lake orders `4.36.0-fmt.1` below `4.36.0` as a prerelease version. Consumers should pin the
+exact Git tag. GitHub's prerelease flag is separate from Lake's version ordering.
 
 ### 3. CHANGELOG
 
@@ -57,8 +54,7 @@ to the tag. A half-updated version fails the release rather than shipping a bina
 repository does not use the bracketed keep-a-changelog form). Compose it for a *user* audience: an `### Upgrading`
 subsection first when anything requires action, then the changes.
 
-Because there is one release per toolchain, a fix landing after a tag appends to that toolchain's existing section
-rather than opening a new one. Versions before 0.4.0 predate the file; do not backfill them.
+Start a new section for each release tag. Versions before 0.4.0 predate the file.
 
 ### 4. Commit
 
@@ -69,7 +65,8 @@ tag moved) — never a bare `git commit` in this shared worktree.
 
 Re-verify on the commit you are tagging:
 
-- `lean-toolchain`, `lakefile.lean` and `LeanFmt/Basic.lean` agree, and the tag is `v` plus that string.
+- The tag names the exact `lean-toolchain` with an optional repair suffix. Its version without `v`
+  matches the package, CLI, and README pin.
 - `CHANGELOG.md`'s top section heading is `## <version> — <date>`.
 - CI is green on that commit. It cannot be until the branch is pushed, so push the branch and wait for green before
   tagging — never tag against a local-only run.

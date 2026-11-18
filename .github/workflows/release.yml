@@ -5,12 +5,9 @@
 # compiler plugin or the cache facet, since a plugin is a shared library loaded into the consumer's
 # compiler. So a release is a tag, a gate, and release notes; nothing is packaged or uploaded.
 #
-# The tag *is* the compatibility contract: it is spelled exactly as the `lean-toolchain` this tree
-# was built against, so a consumer requires the tag matching their own toolchain and never consults
-# a table. `verify-tag` below is what makes that contract true rather than a convention — tag
-# `v4.34.0` on a tree still pinned to an rc and every consumer inherits the mismatch, with no error
-# until something strange happens deep in their build.
-#
+# A tag names the exact Lean toolchain. A formatter-only repair appends -fmt.N,
+# leaving the original tag and the compiler pin intact.
+
 # The three-platform gate survives the binaries it used to build. Consumers now compile lean-fmt
 # themselves, so a platform-shaped failure lands on them at build time rather than on a tarball
 # here; running the suites on each platform is what keeps that from being their discovery. Intel
@@ -27,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to gate and publish (e.g. v4.34.0-rc1)
+        description: Existing tag to gate and publish (e.g. v4.36.0-fmt.1)
         required: true
 
 permissions:
@@ -46,20 +43,38 @@ jobs:
         with:
           ref: ${{ env.TAG }}
 
-      - name: tag names the toolchain
+      - name: tag names the toolchain and formatter version
+        shell: bash
         run: |
+          compatible_tag() {
+            local tag="$1" toolchain="$2" suffix
+            if [[ "$tag" == "$toolchain" ]]; then
+              return 0
+            fi
+            suffix="${tag#"$toolchain"-fmt.}"
+            [[ "$suffix" != "$tag" && "$suffix" =~ ^[1-9][0-9]*$ ]]
+          }
+
+          compatible_tag v4.36.0 v4.36.0
+          compatible_tag v4.36.0-fmt.1 v4.36.0
+          compatible_tag v4.36.0-rc1-fmt.12 v4.36.0-rc1
+          for invalid in v4.36.1 v4.36.1-fmt.1 v4.36.0-rc1 v4.36.0-fmt \
+              v4.36.0-fmt. v4.36.0-fmt.0 v4.36.0-fmt.01 v4.36.0-fmt.-1 v4.36.0-fmt.1.2; do
+            if compatible_tag "$invalid" v4.36.0; then
+              echo "tag verifier accepted invalid tag $invalid" >&2
+              exit 1
+            fi
+          done
+
           toolchain="$(cut -d: -f2 lean-toolchain | tr -d '[:space:]')"
-          if [ "$TAG" != "$toolchain" ]; then
-            echo "tag $TAG does not name this tree's toolchain ($toolchain)" >&2
-            echo "the tag is the compatibility contract; they must be spelled identically" >&2
+          if ! compatible_tag "$TAG" "$toolchain"; then
+            echo "tag $TAG must name toolchain $toolchain, with an optional -fmt.N repair suffix" >&2
             exit 1
           fi
-          # The package version carries the same string without the leading `v`. The boundary
-          # suite's `package-identity` case ties `LeanFmt/Basic.lean` to the lakefile, so pinning
-          # the lakefile here pins what `--version` prints too.
+          # The boundary suite ties the package version to the README and CLI.
           version="$(sed -n 's/.*version := v!"\(.*\)".*/\1/p' lakefile.lean)"
-          if [ "$version" != "${toolchain#v}" ]; then
-            echo "lakefile version $version does not match toolchain ${toolchain#v}" >&2
+          if [[ "$version" != "${TAG#v}" ]]; then
+            echo "lakefile version $version does not match tag ${TAG#v}" >&2
             exit 1
           fi
           echo "tag $TAG, toolchain $toolchain, version $version"

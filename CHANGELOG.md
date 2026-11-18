@@ -8,6 +8,17 @@ notes are on the [releases page](https://github.com/jcreinhold/lean-fmt/releases
 Releases are named for the Lean toolchain they serve. Releases through 0.7.1 used semantic versions and a compatibility
 table; 0.7.1 is the last of those and serves Lean `v4.34.0-rc1`.
 
+## 4.36.0-fmt.1 — 2026-11-18
+
+### Upgrading
+
+Use `v4.36.0-fmt.1` with `leanprover/lean4:v4.36.0`.
+
+### Fixed
+
+- The macOS release tests accept valid inherited session IDs, including session ID 1,
+  and print the observed IDs if a process isolation check fails.
+
 ## 4.36.0 — 2026-11-17
 
 ### Upgrading

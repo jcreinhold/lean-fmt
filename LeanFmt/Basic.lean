@@ -13,11 +13,10 @@ dragging a dependency along. -/
 
 namespace LeanFmt
 
-/-- The version this binary reports, which is the Lean toolchain it serves — the release tag is
-spelled the same way. It must equal `lakefile.lean`'s, and the boundary suite's `package-identity`
-case fails when it does not: the two drifted to 0.1.0 against 0.1.3, and the language server told
-every editor the wrong number until the gate existed. -/
+/-- The formatter release version this binary reports. It matches the Lake package version
+and the release tag without its leading `v`. Formatter-only repairs include the `-fmt.N`
+suffix. The boundary suite checks the package, README, and reported versions agree. -/
 def version : String :=
-  "4.36.0"
+  "4.36.0-fmt.1"
 
 end LeanFmt
