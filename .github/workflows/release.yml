@@ -127,33 +127,28 @@ jobs:
       # index here that no other platform grew).
       - name: test
         env:
-          REPAIR: ${{ needs.verify-tag.outputs.repair }}
           LEAN_FMT_DEBUG_CACHE: "1"
         run: |
-          if [ "$REPAIR" = true ]; then
-            # Performance and security-bench invoke this separate executable.
-            LEAN_NUM_THREADS=2 lake build lean-fmt-tests
-            set -o pipefail
-            log="$RUNNER_TEMP/lean-fmt-release-test.log"
-            if LEAN_NUM_THREADS=2 lake test -- --all --jobs 1 2>&1 | tee "$log"; then
-              exit 0
-            else
-              status=$?
-            fi
-            diagnostics="$(sed -n 's/^logs kept at //p' "$log" | tail -n 1)"
-            if [ -n "$diagnostics" ]; then
-              for suite in performance security-bench ci; do
-                file="$diagnostics/$suite.log"
-                if [ -f "$file" ]; then
-                  printf '\n--- %s full diagnostics ---\n' "$suite"
-                  cat "$file"
-                fi
-              done
-            fi
-            exit "$status"
+          # Performance and security-bench invoke this separate executable.
+          LEAN_NUM_THREADS=2 lake build lean-fmt-tests
+          set -o pipefail
+          log="$RUNNER_TEMP/lean-fmt-release-test.log"
+          if LEAN_NUM_THREADS=2 lake test -- --all --jobs 1 2>&1 | tee "$log"; then
+            exit 0
           else
-            lake test
+            status=$?
           fi
+          diagnostics="$(sed -n 's/^logs kept at //p' "$log" | tail -n 1)"
+          if [ -n "$diagnostics" ]; then
+            for suite in performance security-bench ci; do
+              file="$diagnostics/$suite.log"
+              if [ -f "$file" ]; then
+                printf '\n--- %s full diagnostics ---\n' "$suite"
+                cat "$file"
+              fi
+            done
+          fi
+          exit "$status"
 
       # What a consumer's `lake exe lean-fmt` will do on this platform, exercised through the real
       # frontend child rather than argument parsing alone.
@@ -183,9 +178,9 @@ jobs:
               gh release create "$TAG" --verify-tag --generate-notes
             fi
           fi
-          if [ "$REPAIR" = true ] &&
-              [ "$(gh release view "$TAG" --json isPrerelease --jq .isPrerelease)" != true ]; then
-            echo "release $TAG must be marked as a prerelease" >&2
+          state="$(gh release view "$TAG" --json isDraft,isPrerelease --jq '[.isDraft, .isPrerelease] | @tsv')"
+          if [ "$state" != "$(printf 'false\t%s' "$REPAIR")" ]; then
+            echo "release $TAG must be published with prerelease=$REPAIR" >&2
             exit 1
           fi
           gh release view "$TAG"
