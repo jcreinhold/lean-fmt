@@ -28,6 +28,17 @@ neither path by default still finds them: `bump-toolchain` (moving `lean-toolcha
 `next-toolchain` probe), `release-lean-fmt` (version, CHANGELOG, tag — publishing happens only in CI), and `verso-docs`
 (the `docs/manual` package). Read the skill before improvising one of these.
 
+## Local files and evidence
+
+- Keep no evidence by default. If a result changes a release or maintainer decision, record one short Git summary:
+  the revision, exact check, outcome, and first error needed to act. Do not save raw logs or traces.
+- Before writing generated files, name the allowed path, total byte limit, and when to remove them. Stop at the
+  limit. Afterward, check that no stray files remain and remove generated output when no named next check needs it.
+- Do not put work or evidence in `~/Documents/Codex`, `/private/tmp` (including `/tmp`), or in `.git` outside normal
+  Git data. Do not use another path, an alias, an archive, compression, or split files to evade these rules.
+- Use the installed Elan toolchain and one normal build cache for the work. Do not keep a copied toolchain, target,
+  or checkout as evidence.
+
 ## Build and checks
 
 ```sh
@@ -41,10 +52,8 @@ lake lint            # the formatter on itself, under lean-fmt.toml
 ```
 
 `lake` is the build system; the `Makefile` is the conventional front end (`make build`, `make test`) plus the GNU
-installer. It carries one thing lake does not: `make test-linux` archives `HEAD` plus your dirty files into an Ubuntu
-22.04 container and runs the suites there, with cached elan and lake volumes so repeats are minutes. The 22.04 userland
-is where platform-shaped failures surface (mtime granularity, cache-epoch contamination) and it is what the release legs
-run. First repro for any failure that smells platform-dependent.
+installer. Ubuntu 22.04 is the release test environment. Use it to check platform-specific failures. Do not run
+`make test-linux` as written: it stages a checkout in `/tmp`. Use a Linux checkout that follows the storage rules above.
 
 `docs/manual` is a second Lake package, holding the Verso manual published to GitHub Pages by
 `.github/workflows/pages.yml`. None of the commands above touch it: it requires Verso, and the `lean-fmt` package
