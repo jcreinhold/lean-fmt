@@ -144,8 +144,8 @@ private structure IgnoreLayer where
   patterns : Array IgnorePattern
   origin : String
 
-private def readIgnoreFile (path : FilePath) (base : String) : IO IgnoreLayer := do
-  let text ← IO.FS.readFile path
+private def readIgnoreFile (log : DiscoveryInputLog) (path : FilePath) (base : String) : IO IgnoreLayer := do
+  let text ← log.read path
   let patterns := (text.splitOn "\n").filterMap (compileIgnoreLine base)
   return { patterns := patterns.toArray, origin := path.toString }
 
@@ -162,9 +162,9 @@ lean-fmt needs no `git` on `PATH` to format a repository, and discovery spawns n
 Deliberately **partial** — it does not follow `include`/`includeIf` directives, so it never applies a
 global ignore file reachable only through a conditional include. -/
 
-private def expandHome (path : String) : IO String := do
+private def expandHome (log : DiscoveryInputLog) (path : String) : IO String := do
   if path.startsWith "~/" then
-    match ← IO.getEnv "HOME" with
+    match ← log.env "HOME" with
     | some home =>
       return home ++ (path.drop 1).toString
     | none =>
@@ -173,10 +173,10 @@ private def expandHome (path : String) : IO String := do
 
 /-- Extract `core.excludesfile` from a git-style INI file. Section and key names are case-insensitive,
 which is why both are lowered before comparison. -/
-private def excludesFileIn? (path : FilePath) : IO (Option String) := do
-  unless ← path.pathExists do
+private def excludesFileIn? (log : DiscoveryInputLog) (path : FilePath) : IO (Option String) := do
+  unless ← log.exists path do
     return none
-  let text ← IO.FS.readFile path
+  let text ← log.read path
   let mut currentSection := ""
   for line in text.splitOn "\n" do
     let line := line.trimAscii.toString
@@ -190,34 +190,34 @@ private def excludesFileIn? (path : FilePath) : IO (Option String) := do
         let key := key.trimAscii.toString.toLower
         let value := (String.intercalate "=" (first :: rest)).trimAscii.toString
         if currentSection == "core" && key == "excludesfile" then
-          return some (← expandHome value)
+          return some (← expandHome log value)
       | _ =>
         pure ()
   return none
 
-private def globalIgnoreFile? : IO (Option FilePath) := do
+private def globalIgnoreFile? (log : DiscoveryInputLog) : IO (Option FilePath) := do
   let mut candidates : Array FilePath := #[]
-  if let some path← IO.getEnv "GIT_CONFIG_GLOBAL" then
+  if let some path← log.env "GIT_CONFIG_GLOBAL" then
     candidates := candidates.push path
   let configHome ←
-    match ← IO.getEnv "XDG_CONFIG_HOME" with
+    match ← log.env "XDG_CONFIG_HOME" with
     | some path =>
       pure (some (FilePath.mk path))
     | none =>
-      pure ((← IO.getEnv "HOME").map fun home => FilePath.mk home / ".config")
+      pure ((← log.env "HOME").map fun home => FilePath.mk home / ".config")
   if let some home := configHome then
     candidates := candidates.push (home / "git" / "config")
-  if let some home← IO.getEnv "HOME" then
+  if let some home← log.env "HOME" then
     candidates := candidates.push (FilePath.mk home / ".gitconfig")
   for candidate in candidates do
-    if let some configured← excludesFileIn? candidate then
+    if let some configured← excludesFileIn? log candidate then
       let path := FilePath.mk configured
-      if ← path.pathExists then
+      if ← log.exists path then
         return some path
   -- git's documented default when `core.excludesFile` is unset.
   if let some home := configHome then
     let path := home / "git" / "ignore"
-    if ← path.pathExists then
+    if ← log.exists path then
       return some path
   return none
 
@@ -225,28 +225,33 @@ private def globalIgnoreFile? : IO (Option FilePath) := do
 filesystem root. May sit **above** the project root, because a Lean project is commonly a
 subdirectory of a larger repository. `.git` may be a directory or a
 file (a worktree or submodule gitlink); both forms are accepted. -/
-private partial def repositoryRoot? (directory : FilePath) : IO (Option FilePath) := do
-  if ← (directory / ".git").pathExists then
+private partial def repositoryRoot? (log : DiscoveryInputLog) (directory : FilePath) : IO (Option FilePath) := do
+  if ← log.exists (directory / ".git") then
     return some directory
   match directory.parent with
   | some parent =>
     if parent == directory then
       return none
     else
-      repositoryRoot? parent
+      repositoryRoot? log parent
   | none =>
     return none
 
 /-- `.git/info/exclude` for a repository root, following a `.git` **file** (`gitdir: <path>`) to the
 real git directory when necessary. -/
-private def repositoryExclude? (repository : FilePath) : IO (Option FilePath) := do
+private def repositoryExclude? (log : DiscoveryInputLog) (repository : FilePath) : IO (Option FilePath) := do
   let dotGit := repository / ".git"
+  let isDirectory ← if log.isSome then
+    pure ((← dotGit.metadata).type == .dir)
+  else
+    dotGit.isDir
+  log.record (.directory dotGit.toString isDirectory)
   let gitDirectory ←
-    if ← dotGit.isDir then
+    if isDirectory then
       pure dotGit
     else
       do
-        let text ← IO.FS.readFile dotGit
+        let text ← log.read dotGit
         let trimmed := text.trimAscii
         if trimmed.startsWith "gitdir:" then
           let target := ((trimmed.drop "gitdir:".length).toString).trimAscii.toString
@@ -255,7 +260,7 @@ private def repositoryExclude? (repository : FilePath) : IO (Option FilePath) :=
         else
           pure dotGit
   let path := gitDirectory / "info" / "exclude"
-  return if ← path.pathExists then some path else none
+  return if ← log.exists path then some path else none
 
 /-! ## The walk -/
 
@@ -306,22 +311,22 @@ private def isLeanSource (path : FilePath) : Bool :=
 The single walk exists to avoid a per-file filesystem
 ascent. Pruning is sound because git's directory-exclusion rule holds — an ignored directory can hold
 no re-included file, so not descending cannot lose one. -/
-private partial def walkDirectory (root : FilePath) (explicit? : Option FormatterConfig)
-    (directory : FilePath) (relative : String) (current : FormatterConfig)
+private partial def walkDirectory (log : DiscoveryInputLog) (root : FilePath)
+    (explicit? : Option FormatterConfig) (directory : FilePath) (relative : String) (current : FormatterConfig)
     (layers : Array IgnoreLayer) (accumulated : Discovery) : IO Discovery := do
   let mut current := current
   let mut layers := layers
   let mut accumulated := accumulated
   -- A config in this directory governs this subtree, unless `--config` overrode discovery entirely.
   if explicit?.isNone then
-    if let some configPath← recognizedConfigIn? directory then
-      current ← FormatterConfig.loadFrom root configPath relative
+    if let some configPath← recognizedConfigIn? directory log then
+      current ← FormatterConfig.loadFrom root configPath relative log
       accumulated := { accumulated with configs := accumulated.configs.push (relative, current) }
   if current.respectGitignore then
     for name in [".gitignore", ".ignore"] do
       let path := directory / name
-      if ← path.pathExists then
-        let layer ← readIgnoreFile path relative
+      if ← log.exists path then
+        let layer ← readIgnoreFile log path relative
         layers := layers.push layer
         accumulated :=
           { accumulated with ignoreSources := accumulated.ignoreSources.push layer.origin }
@@ -364,7 +369,7 @@ private partial def walkDirectory (root : FilePath) (explicit? : Option Formatte
           continue
       accumulated := { accumulated with sources := accumulated.sources.push childRelative }
   for (path, childRelative) in subdirectories do
-    accumulated ← walkDirectory root explicit? path childRelative current layers accumulated
+    accumulated ← walkDirectory log root explicit? path childRelative current layers accumulated
   return accumulated
 
 /-- Apply a command-line `reflow-comments` override to every configuration the walk resolved:
@@ -384,31 +389,32 @@ def Discovery.overrideReflowComments (discovery : Discovery) (reflow? : Option B
 
 `explicit?` is a `--config` override: it applies to every file, no directory is searched for a nested
 config, and a nested config that exists is inert. -/
-def run (root : FilePath) (explicit? : Option FilePath) : IO Discovery := do
+def run (root : FilePath) (explicit? : Option FilePath) (log : DiscoveryInputLog := none) :
+    IO Discovery := do
   let root ← IO.FS.realPath root
   let fallback ←
     match explicit? with
     | some path =>
-      unless ← path.pathExists do
+      unless ← log.exists path do
         throw <| IO.userError s!"formatter configuration does not exist: {path}"
-      FormatterConfig.loadFrom root path ""
+      FormatterConfig.loadFrom root path "" log
     | none =>
-      match ← recognizedConfigIn? root with
+      match ← recognizedConfigIn? root log with
       | none =>
-        pure (← FormatterConfig.load root none)
+        pure (← FormatterConfig.load root none log)
       | some path =>
-        FormatterConfig.loadFrom root path ""
+        FormatterConfig.loadFrom root path "" log
   let mut layers : Array IgnoreLayer := #[]
   let mut ignoreSources : Array String := #[]
   if fallback.respectGitignore then
     -- Lowest precedence first: global ignore, then the repository's own excludes.
-    if let some path← globalIgnoreFile? then
-      let layer ← readIgnoreFile path ""
+    if let some path← globalIgnoreFile? log then
+      let layer ← readIgnoreFile log path ""
       layers := layers.push layer
       ignoreSources := ignoreSources.push layer.origin
-    if let some repository← repositoryRoot? root then
-      if let some path← repositoryExclude? repository then
-        let layer ← readIgnoreFile path ""
+    if let some repository← repositoryRoot? log root then
+      if let some path← repositoryExclude? log repository then
+        let layer ← readIgnoreFile log path ""
         layers := layers.push layer
         ignoreSources := ignoreSources.push layer.origin
   let seed : Discovery :=
@@ -420,7 +426,7 @@ def run (root : FilePath) (explicit? : Option FilePath) : IO Discovery := do
   -- The root's own config is the fallback and is already loaded; record it so `config show` can name
   -- it, without letting the walk load it a second time.
   let seed := if explicit?.isNone then seed else seed
-  walkDirectory root (explicit?.map fun _ => fallback) root "" fallback layers seed
+  walkDirectory log root (explicit?.map fun _ => fallback) root "" fallback layers seed
 
 /-- Why a path was or was not selected, as a gate number. `selected`
 is gate 0. Reported by `config show` so "would this file be formatted, and why not" has an answer. -/

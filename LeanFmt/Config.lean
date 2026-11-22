@@ -6,6 +6,7 @@ Authors: Jacob Reinhold
 
 module
 
+import all LeanFmt.Digest
 import all LeanFmt.Imports
 import all LeanFmt.Rules
 
@@ -782,8 +783,50 @@ private def parseFile (anchor file : String) (fileMap : Lean.FileMap) (table : L
     config ← assignLintKey anchor file fileMap config key value
   return config
 
-private def loadDocument (path : System.FilePath) : IO (Lake.Toml.Table × Lean.FileMap) := do
+/-- Observations made by the discovery operation itself, in the order it used them. -/
+inductive DiscoveryInput where
+  | absent (path : String)
+  | present (path : String)
+  | directory (path : String) (value : Bool)
+  | content (path : String) (digest : Digest)
+  | environment (name : String) (value : Option String)
+  | extendAnchor (path : String) (anchor : String)
+  deriving BEq, Repr
+
+abbrev DiscoveryInputLog := Option (IO.Ref (Array DiscoveryInput))
+
+def DiscoveryInputLog.record (log : DiscoveryInputLog) (input : DiscoveryInput) : IO Unit := do
+  if let some entries := log then
+    if (← entries.get).size ≥ 16384 then
+      throw <| IO.userError "formatter discovery exceeds the input binding limit"
+    entries.modify (·.push input)
+
+def DiscoveryInputLog.exists (log : DiscoveryInputLog) (path : System.FilePath) : IO Bool := do
+  if log.isNone then
+    return ← path.pathExists
+  let present ←
+    try
+      discard path.metadata
+      pure true
+    catch
+      | .noFileOrDirectory .. => pure false
+      | error => throw error
+  log.record (if present then .present path.toString else .absent path.toString)
+  return present
+
+def DiscoveryInputLog.read (log : DiscoveryInputLog) (path : System.FilePath) : IO String := do
   let input ← IO.FS.readFile path
+  if log.isSome then
+    log.record (.content path.toString (Digest.ofString input))
+  return input
+
+def DiscoveryInputLog.env (log : DiscoveryInputLog) (name : String) : IO (Option String) := do
+  let value ← IO.getEnv name
+  log.record (.environment name value)
+  return value
+
+private def loadDocument (log : DiscoveryInputLog) (path : System.FilePath) : IO (Lake.Toml.Table × Lean.FileMap) := do
+  let input ← log.read path
   let context := Lean.Parser.mkInputContext input path.toString
   match ← Lake.Toml.loadToml context |>.toBaseIO with
   | .ok table =>
@@ -819,7 +862,7 @@ Chain members are identified by **realpath**, so a symlinked alias of an ancesto
 still caught as a cycle. A parent outside the project root keeps the extending file's anchor rather
 than acquiring one outside the tree, which is what makes an out-of-tree shared config usable at
 all; a parent inside the root anchors at its own directory like any discovered config. -/
-private partial def loadChain (root : System.FilePath) (path : System.FilePath) (anchor : String)
+private partial def loadChain (log : DiscoveryInputLog) (root : System.FilePath) (path : System.FilePath) (anchor : String)
     (seen : Array System.FilePath) : IO PartialConfig := do
   let resolved ← IO.FS.realPath path
   if seen.contains resolved then
@@ -827,7 +870,7 @@ private partial def loadChain (root : System.FilePath) (path : System.FilePath) 
     throw <| IO.userError s!"configuration extend cycle: {String.intercalate " -> " cycle.toList}"
   if seen.size ≥ maxExtendDepth then
     throw <| IO.userError s!"configuration extend chain exceeds {maxExtendDepth} files: {resolved}"
-  let (table, fileMap) ← loadDocument resolved
+  let (table, fileMap) ← loadDocument log resolved
   let child ←
     match parseFile anchor resolved.toString fileMap table with
     | .ok config =>
@@ -842,20 +885,21 @@ private partial def loadChain (root : System.FilePath) (path : System.FilePath) 
     let targetPath :=
       if (System.FilePath.mk target).isAbsolute then System.FilePath.mk target
       else directory / target
-    unless ← targetPath.pathExists do
+    unless ← log.exists targetPath do
       -- Name the path as written, beside the file that wrote it: the caller's own
       -- argument, per the `CLAUDE.md` path-error rule.
       throw <|
           IO.userError
             s!"configuration extend target does not exist: {target} (extended by {resolved})"
     let parentAnchor := (← anchorFor root (targetPath.parent.getD root)).getD anchor
-    let parent ← loadChain root targetPath parentAnchor (seen.push resolved)
+    log.record (.extendAnchor targetPath.toString parentAnchor)
+    let parent ← loadChain log root targetPath parentAnchor (seen.push resolved)
     return parent.compose child
 
 /-- Load the configuration rooted at one file, following its `extend` chain. -/
-def FormatterConfig.loadFrom (root : System.FilePath) (path : System.FilePath) (anchor : String) :
-    IO FormatterConfig := do
-  match (← loadChain root path anchor #[]).resolve with
+def FormatterConfig.loadFrom (root : System.FilePath) (path : System.FilePath) (anchor : String)
+    (log : DiscoveryInputLog := none) : IO FormatterConfig := do
+  match (← loadChain log root path anchor #[]).resolve with
   | .ok config =>
     return config
   | .error message =>
@@ -868,9 +912,10 @@ def recognizedConfigNames : Array String :=
 /-- The recognized configuration file in one directory, or `none`. Both names present is a
 hard error naming both paths rather than a silent priority win — the same reasoning as every other
 configuration contradiction here. -/
-def recognizedConfigIn? (directory : System.FilePath) : IO (Option System.FilePath) := do
+def recognizedConfigIn? (directory : System.FilePath) (log : DiscoveryInputLog := none) :
+    IO (Option System.FilePath) := do
   let present : Array String ←
-    recognizedConfigNames.filterM fun name => (directory / name).pathExists
+    recognizedConfigNames.filterM fun name => log.exists (directory / name)
   match present.toList with
   | [] =>
     return none
@@ -889,19 +934,19 @@ An explicit `--config` anchors its path patterns at the **project root**, not at
 directory: it is a run-wide override rather than a config that governs the subtree it sits in, and
 anchoring it at its own directory would make `include`/`exclude` in a config outside the tree match
 nothing. A *discovered* config anchors at its own directory. -/
-def FormatterConfig.load (root : System.FilePath) (explicit? : Option System.FilePath := none) :
-    IO FormatterConfig := do
+def FormatterConfig.load (root : System.FilePath) (explicit? : Option System.FilePath := none)
+    (log : DiscoveryInputLog := none) : IO FormatterConfig := do
   match explicit? with
   | some path =>
-    unless ← path.pathExists do
+    unless ← log.exists path do
       throw <| IO.userError s!"formatter configuration does not exist: {path}"
-    FormatterConfig.loadFrom root path ""
+    FormatterConfig.loadFrom root path "" log
   | none =>
-    match ← recognizedConfigIn? root with
+    match ← recognizedConfigIn? root log with
     | none =>
       return defaultConfig
     | some path =>
-      FormatterConfig.loadFrom root path ""
+      FormatterConfig.loadFrom root path "" log
 
 /-- The `file:line` origins recorded for one key, in composition order. Empty when the
 setting was never written and the default applies. -/

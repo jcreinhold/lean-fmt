@@ -2,6 +2,8 @@ module
 
 public import Test
 
+import all LeanFmt.Application
+
 /-!
 # The discovery suite
 
@@ -411,6 +413,52 @@ private def testLargeTree (ctx : Ctx) : IO Unit := do
   ensure (loopMillis < 2000)
       s!"a symlink loop multiplied the walk ({loopMillis}ms) -- directory symlinks are being followed"
 
+private def testPreviewInputs (ctx : Ctx) : IO Unit := do
+  let root := ctx.work / "preview-inputs"
+  IO.FS.createDirAll root
+  copyFile (ctx.root / "lean-toolchain") (root / "lean-toolchain")
+  writeFile (root / "lakefile.toml") "name = \"previewInputs\"\n[[lean_lib]]\nname = \"Probe\"\n"
+  let source := "def a  : Nat := 1\n"
+  let ignored := "def b  : Nat := 2\n"
+  let ignorePath := root / ".gitignore"
+  writeFile ignorePath "Ignored.lean\n"
+  writeFile (root / "Probe.lean") source
+  writeFile (root / "Ignored.lean") ignored
+  let request : LeanFmt.Internal.Application.RunRequest := {
+    mode := .format, root, files := #[], formatCheck := true, noBuild := true, cache := false,
+    inheritProcessGroup := true, workers := some 1 }
+  let plain ← LeanFmt.Internal.Application.execute request
+  let bound ← LeanFmt.Internal.Application.execute request (bindPreviewInputs := true)
+  ensureEq "binding preserves the ordinary preview report"
+    (Lean.toJson plain.report).compress (Lean.toJson bound.report).compress
+  ensureEq "the renderer actually produced a preview" #["would-format"]
+    (bound.report.files.map (·.status))
+  let some original := bound.previewInputs | throw <| IO.userError "missing preview binding"
+  ensureEq "only the selected source contributes a digest"
+    #[("Probe.lean", LeanFmt.Digest.ofString source)] original.sources
+  let root ← IO.FS.realPath root
+  ensure (original.discovery.contains (.content ignorePath.toString
+      (LeanFmt.Digest.ofString "Ignored.lean\n"))) "missing the actual ignore bytes"
+  let config := root / ".lean-fmt.toml"
+  ensure (original.discovery.contains (.absent config.toString)) "missing absent config lookup"
+  ensureEq "preview does not rewrite selected source" source (← IO.FS.readFile (root / "Probe.lean"))
+  ensureEq "preview leaves ignored source alone" ignored (← IO.FS.readFile (root / "Ignored.lean"))
+  writeFile config "# no policy change\n"
+  let bound ← LeanFmt.Internal.Application.execute request (bindPreviewInputs := true)
+  let some configured := bound.previewInputs | throw <| IO.userError "missing config binding"
+  ensure (configured.discovery != original.discovery) "new config must change discovery evidence"
+  ensure (configured.discovery.contains (.content config.toString
+      (LeanFmt.Digest.ofString "# no policy change\n"))) "missing the new config bytes"
+  ensureEq "config appearance did not change implicit selection" original.sources configured.sources
+  let edited := "def a  : Nat := 3\n"
+  writeFile (root / "Probe.lean") edited
+  let bound ← LeanFmt.Internal.Application.execute request (bindPreviewInputs := true)
+  let some changed := bound.previewInputs | throw <| IO.userError "missing edited source binding"
+  ensure (changed.discovery == configured.discovery) "editing source did not change discovery policy"
+  ensureEq "bound snapshot contains the changed input"
+    #[("Probe.lean", LeanFmt.Digest.ofString edited)] changed.sources
+  ensureEq "preview preserves the newly edited source" edited (← IO.FS.readFile (root / "Probe.lean"))
+
 end Discovery
 
 public def main (args : List String) : IO UInt32 := do
@@ -419,7 +467,8 @@ public def main (args : List String) : IO UInt32 := do
       let ctx : Discovery.Ctx :=
         { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
       let cases : Array Case :=
-        #[{ name := "nested-workspaces", run := Discovery.testNested ctx },
+        #[{ name := "preview-input-binding", run := Discovery.testPreviewInputs ctx },
+          { name := "nested-workspaces", run := Discovery.testNested ctx },
           { name := "extend", run := Discovery.testExtend ctx },
           { name := "extend-cycle", run := Discovery.testExtendCycle ctx },
           { name := "symlinks", run := Discovery.testSymlinks ctx },

@@ -1797,13 +1797,18 @@ private def withVerbatimCommands (snapshot : SourceSnapshot) (analysis : Semanti
     { report with
       verbatimCommands := canonical.metrics.verbatimCommands, degradations }
 
-/-- What one run produced: the canonical report, and the line/column resolution presentation
-needs to render it. Two values rather than one enriched report, because `RunReport` is a
-compatibility surface and `PositionIndex` is a rendering aid — folding the second into the first
-would put presentation data in the canonical semantic report. -/
+/-- The ordered discovery observations and the exact source snapshots used by one preview. -/
+structure PreviewInputBinding where
+  discovery : Array DiscoveryInput
+  sources : Array (String × Digest)
+  deriving BEq, Repr
+
+/-- What one run produced: the canonical report, the line/column resolution used in presentation, and the input binding when requested.
+`RunReport` is a compatibility surface; the other values are independent of its renderers. -/
 structure RunOutcome where
   report : RunReport
   positions : PositionIndex
+  previewInputs : Option PreviewInputBinding := none
 
 /-- What one batch target produced, however it produced it. The worker writes this whole value
 at the target's index; the fold afterwards is the only place ordering exists, which is what makes
@@ -1919,7 +1924,12 @@ private def verifyAdmittedSources (expected : Std.HashMap String Digest)
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
-def execute (request : RunRequest) : IO RunOutcome := do
+def execute (request : RunRequest) (bindPreviewInputs : Bool := false) : IO RunOutcome := do
+  if bindPreviewInputs then
+    unless request.mode == .format && request.formatCheck && request.files.isEmpty &&
+        request.configPath?.isNone && request.noBuild && !request.cache do
+      throw <| IO.userError "input binding requires implicit format --check --no-build --no-cache"
+  let discoveryLog ← if bindPreviewInputs then some <$> IO.mkRef #[] else pure none
   let expected ← IO.ofExcept request.admittedSourceMap
   let files := if expected.isEmpty then request.files else
     request.admittedSources.map fun (relative, _) => FilePath.mk relative
@@ -1945,7 +1955,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
   -- it into an existing phase would hide the cost.
   milestone "discovering configuration and sources..."
   let discoveryStarted ← IO.monoNanosNow
-  let discovery ← Discovery.run root configPath?
+  let discovery ← Discovery.run root configPath? discoveryLog
   let discovery := discovery.overrideReflowComments request.reflowComments?
   recordDuration "discovery" ((← IO.monoNanosNow) - discoveryStarted)
   -- The fallback plan is resolved first and unconditionally, so an invalid CLI selector is still
@@ -1968,6 +1978,15 @@ def execute (request : RunRequest) : IO RunOutcome := do
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
   verifyAdmittedSources expected snapshots
+  let previewInputs ←
+    if let some entries := discoveryLog then
+      if snapshots.size > 16384 then
+        throw <| IO.userError "formatter preview exceeds the source binding limit"
+      pure <| some {
+        discovery := ← entries.get
+        sources := snapshots.map fun snapshot => (snapshot.relativePath, Digest.ofString snapshot.source) }
+    else
+      pure none
   milestone s!"selected {snapshots.size} {if snapshots.size == 1 then "file" else "files"}"
   -- One `RulePlan` per **distinct effective configuration**, not one per file: `configKey` is
   -- the directory whose config governs a target, so files sharing a config share a plan and a
@@ -2079,7 +2098,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
                       previewFile previewMode plan request.unsafeFixes importReport.1 importReport.2
                         snapshot analysis))
       let positions ← profiledPositions snapshots files
-      return { report := summarize request.mode.toString files, positions }
+      return { report := summarize request.mode.toString files, positions, previewInputs }
   -- The plugin artifact carries reconstructible syntax but never semantic diagnostics, so a
   -- syntax-tier selection is answered from it without a frontend and a semantic one is not.
   -- A rendering run does not fetch it at all: layout needs the live per-command environment, not a
@@ -2118,7 +2137,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
         withPhase "cache_write" <|
             cache.writeAll project snapshots available (prune := request.files.isEmpty)
       let positions ← profiledPositions snapshots files
-      return { report := summarize request.mode.toString files, positions }
+      return { report := summarize request.mode.toString files, positions, previewInputs }
   milestone "starting the toolchain..."
   withExactRun project workers request.inheritProcessGroup fun exactRun => do
       -- Exactly the files the decisions above left unanswered, which is exactly the set that
@@ -2174,7 +2193,7 @@ def execute (request : RunRequest) : IO RunOutcome := do
         withPhase "cache_write" <|
             cache.writeAll project snapshots analyses (prune := request.files.isEmpty)
       let positions ← profiledPositions snapshots files
-      return { report := summarize request.mode.toString files failures, positions }
+      return { report := summarize request.mode.toString files failures, positions, previewInputs }
 
 /-! ## The stdin/stdout stream surface
 
