@@ -675,6 +675,20 @@ private def testStaleSourceRace (ctx : Ctx) : IO Unit := do
       ensure (result.stdout.contains "source changed after analysis")
           "the stale race is not reported"
 
+/-- Bytes changed after the digest was captured must never enter the formatter's fix path. -/
+private def testAdmittedSourceRace (ctx : Ctx) : IO Unit := do
+  withRestored ctx.backupFindings ctx.findings do
+    let digest ← sha256 ctx.findings
+    let original ← IO.FS.readFile ctx.findings
+    writeFile ctx.findings (original ++ "\n-- Edited after admission.\n")
+    let edited ← metadataLine ctx.findings
+    let refused ← run ctx 2 "admitted source changed before snapshot"
+      #["check", "--fix", "--root", ".", "--no-build", "--inherit-process-group", "--no-cache",
+        "--admitted-source", "tests/fixtures/check/Findings.lean", digest]
+    ensure (refused.stderr.contains "source differs from its admitted digest")
+      "managed fix did not identify the first-read digest mismatch"
+    ensureEq "managed fix changed the edited source" edited (← metadataLine ctx.findings)
+
 /-- A crash between validation and the rename that commits the write: the target keeps its exact
 bytes/mtime/mode, the run is an infrastructure failure, and no temp file is orphaned. -/
 private def testWriteCrash (ctx : Ctx) : IO Unit := do
@@ -1340,6 +1354,7 @@ public def main (args : List String) : IO UInt32 := do
           { name := "statistics", run := Modes.testStatistics ctx },
           { name := "validator-rejection", run := Modes.testValidatorRejection ctx },
           { name := "stale-source-race", run := Modes.testStaleSourceRace ctx },
+          { name := "admitted-source-race", run := Modes.testAdmittedSourceRace ctx },
           { name := "write-crash", run := Modes.testWriteCrash ctx },
           { name := "fix-permissions", run := Modes.testFixPermissions ctx },
           { name := "rules-registry", run := Modes.testRulesRegistry ctx },

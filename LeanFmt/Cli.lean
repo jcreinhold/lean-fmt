@@ -7,6 +7,7 @@ Authors: Jacob Reinhold
 module
 
 import all LeanFmt.CliHelp
+import LeanFmt.Digest
 import all LeanFmt.GitSelection
 import all LeanFmt.LanguageServer
 import all LeanFmt.Watch
@@ -243,6 +244,13 @@ private def parseFileArgs (mode : RunMode) (args : List String) :
           s!"unknown --output-format: {value} \
           (expected text, concise, json, github, sarif, or junit)"
     | "--output-file" :: path :: rest => loop mode rest { command with outputFile? := some path }
+    | "--admitted-source" :: path :: hash :: rest =>
+      match Digest.parse? hash with
+      | some digest =>
+        loop mode rest { command with run := {
+          command.run with admittedSources := command.run.admittedSources.push (path, digest) } }
+      | none => .error "--admitted-source requires a lowercase SHA-256 digest"
+    | "--admitted-source" :: _ => .error "--admitted-source requires a relative path and SHA-256 digest"
     | "--no-cache" :: rest =>
       loop mode rest { command with run := { command.run with cache := false } }
     | "--config" :: path :: rest =>
@@ -1560,6 +1568,9 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
     | .error message =>
       IO.eprintln message;
       return 2
+  if !command.run.admittedSources.isEmpty && (command.watch || command.stdin || command.changed?.isSome) then
+    IO.eprintln "--admitted-source requires a finite disk fix"
+    return 2
   if let .error message := validateStdin mode command then
     IO.eprintln message
     return 2

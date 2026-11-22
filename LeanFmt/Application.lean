@@ -61,6 +61,8 @@ structure RunRequest where
   mode : RunMode
   root : FilePath
   files : Array FilePath
+  /-- The exact UTF-8 bytes approved for each path in a supervised finite fix. -/
+  admittedSources : Array (String × Digest) := #[]
   cache : Bool := true
   configPath? : Option FilePath := none
   select : Array String := #[]
@@ -1889,10 +1891,38 @@ private partial def batchWorker (exactRun : ExactRun) (request : RunRequest)
     LeanFmt.Progress.advance progress target.snapshot.path.toString
     batchWorker exactRun request renderCanonical demanded demandedCaps work next outcomes progress
 
+private def RunRequest.admittedSourceMap (request : RunRequest) :
+    Except String (Std.HashMap String Digest) := do
+  if request.admittedSources.isEmpty then
+    return {}
+  unless request.mode == .fix && request.noBuild && request.inheritProcessGroup &&
+      !request.cache && request.files.isEmpty do
+    throw "--admitted-source requires check --fix --no-build --inherit-process-group --no-cache without other file targets"
+  let mut expected : Std.HashMap String Digest := {}
+  for (relative, digest) in request.admittedSources do
+    let path := FilePath.mk relative
+    if path.isAbsolute || path.components.any (fun part => part == "" || part == "." || part == "..") ||
+        expected.contains relative then
+      throw s!"invalid or duplicate admitted formatter source: {relative}"
+    expected := expected.insert relative digest
+  return expected
+
+private def verifyAdmittedSources (expected : Std.HashMap String Digest)
+    (snapshots : Array SourceSnapshot) : IO Unit := do
+  unless expected.isEmpty do
+    unless snapshots.size == expected.size do
+      throw <| IO.userError "selected files differ from the admitted formatter sources"
+    for snapshot in snapshots do
+      unless expected[snapshot.relativePath]? == some (Digest.ofString snapshot.source) do
+        throw <| IO.userError s!"source differs from its admitted digest: {snapshot.relativePath}"
+
 /- Execute one immutable user request. This operation owns workspace discovery, exact module
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
 def execute (request : RunRequest) : IO RunOutcome := do
+  let expected ← IO.ofExcept request.admittedSourceMap
+  let files := if expected.isEmpty then request.files else
+    request.admittedSources.map fun (relative, _) => FilePath.mk relative
   let workers ← resolveWorkers request.workers
   recordCount "workers" workers
   let root ← IO.FS.realPath request.root
@@ -1933,10 +1963,11 @@ def execute (request : RunRequest) : IO RunOutcome := do
       announced := announced.push notice
       IO.eprintln s!"lean-fmt: {notice}"
   milestone "loading the Lake workspace..."
-  let project ← Project.load root discovery request.files (noBuild := request.noBuild)
+  let project ← Project.load root discovery files (noBuild := request.noBuild)
   recordDuration "workspace_load" project.workspaceLoadNanos
   recordDuration "selection_snapshot" project.selectionNanos
   let snapshots := project.targets
+  verifyAdmittedSources expected snapshots
   milestone s!"selected {snapshots.size} {if snapshots.size == 1 then "file" else "files"}"
   -- One `RulePlan` per **distinct effective configuration**, not one per file: `configKey` is
   -- the directory whose config governs a target, so files sharing a config share a plan and a
