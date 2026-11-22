@@ -244,6 +244,15 @@ private def parseFileArgs (mode : RunMode) (args : List String) :
           s!"unknown --output-format: {value} \
           (expected text, concise, json, github, sarif, or junit)"
     | "--output-file" :: path :: rest => loop mode rest { command with outputFile? := some path }
+    | "--admitted-preview" :: hash :: rest =>
+      match Digest.parse? hash with
+      | some digest =>
+        if command.run.admittedPreview?.isSome then
+          .error "--admitted-preview must appear once"
+        else
+          loop mode rest { command with run := { command.run with admittedPreview? := some digest } }
+      | none => .error "--admitted-preview requires a lowercase SHA-256 digest"
+    | "--admitted-preview" :: _ => .error "--admitted-preview requires a SHA-256 digest"
     | "--admitted-source" :: path :: hash :: rest =>
       match Digest.parse? hash with
       | some digest =>
@@ -1571,6 +1580,11 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
   if !command.run.admittedSources.isEmpty && (command.watch || command.stdin || command.changed?.isSome) then
     IO.eprintln "--admitted-source requires a finite disk fix"
     return 2
+  if command.run.admittedPreview?.isSome &&
+      (command.watch || command.stdin || command.stdinFilename?.isSome || command.changed?.isSome ||
+        command.range?.isSome || !command.run.inheritProcessGroup) then
+    IO.eprintln "--admitted-preview requires a supervised implicit disk preview"
+    return 2
   if let .error message := validateStdin mode command then
     IO.eprintln message
     return 2
@@ -1694,6 +1708,16 @@ unsafe def runCli (arguments : List String) : IO UInt32 := do
     | none =>
       printHelp (← IO.getStderr) CliHelp.overviewHelp
       return 2
+  | "preview-input" :: ["--root", root] =>
+    try
+      IO.println (← capturePreviewInput (FilePath.mk root)).hex
+      return 0
+    catch error =>
+      IO.eprintln s!"lean-fmt: {error}"
+      return 2
+  | "preview-input" :: _ =>
+    IO.eprintln "usage: lean-fmt preview-input --root PATH"
+    return 2
   | "check" :: rest =>
     runFileCommand .check rest
   | "format" :: rest =>

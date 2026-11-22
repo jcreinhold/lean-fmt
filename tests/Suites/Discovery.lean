@@ -459,6 +459,35 @@ private def testPreviewInputs (ctx : Ctx) : IO Unit := do
     #[("Probe.lean", LeanFmt.Digest.ofString edited)] changed.sources
   ensureEq "preview preserves the newly edited source" edited (← IO.FS.readFile (root / "Probe.lean"))
 
+private def testAdmittedPreview (ctx : Ctx) : IO Unit := do
+  let root := ctx.work / "admitted-preview"
+  IO.FS.createDirAll root
+  copyFile (ctx.root / "lean-toolchain") (root / "lean-toolchain")
+  writeFile (root / "lakefile.toml") "name = \"admittedPreview\"\n[[lean_lib]]\nname = \"Probe\"\n"
+  let source := "def a  : Nat := 1\n"
+  writeFile (root / "Probe.lean") source
+  writeFile (root / ".lean-fmt.toml") "extend = \"../preview-policy.toml\"\n"
+  let parent := ctx.work / "preview-policy.toml"
+  writeFile parent "# ordinary defaults\n"
+  let capture ← expectExit 0 "preview input capture" ctx.application
+    #["preview-input", "--root", root.toString]
+  let digest := capture.stdout.trimAscii.toString
+  ensure ((LeanFmt.Digest.parse? digest).isSome) "capture must emit one digest"
+  ensure (!(← (root / ".lake").pathExists) && !(← (root / "lake-manifest.json").pathExists))
+    "query must not load or refresh Lake state"
+  let args := #["format", "--check", "--no-build", "--no-cache", "--inherit-process-group", "--workers",
+    "1", "--root", root.toString, "--json"]
+  let argsWithDigest := args ++ #["--admitted-preview", digest]
+  let ordinary ← expectExit 1 "ordinary preview" ctx.application args
+  let accepted ← expectExit 1 "admitted preview" ctx.application argsWithDigest
+  ensureEq "successful admitted check preserves ordinary output" ordinary.stdout accepted.stdout
+  writeFile parent "exclude = [\"Probe.lean\"]\n"
+  discard <| expectExit 0 "new policy changes the ordinary verdict" ctx.application args
+  let refused ← expectExit 2 "old digest refuses inherited policy change" ctx.application argsWithDigest
+  ensure (refused.stdout.isEmpty && refused.stderr.contains "differ from the admitted digest")
+    "changed inherited configuration must produce only the refusal"
+  ensureEq "preview leaves source untouched" source (← IO.FS.readFile (root / "Probe.lean"))
+
 end Discovery
 
 public def main (args : List String) : IO UInt32 := do
@@ -468,6 +497,7 @@ public def main (args : List String) : IO UInt32 := do
         { root, application := (root / ".lake" / "build" / "bin" / "lean-fmt").toString, work }
       let cases : Array Case :=
         #[{ name := "preview-input-binding", run := Discovery.testPreviewInputs ctx },
+          { name := "admitted-preview", run := Discovery.testAdmittedPreview ctx },
           { name := "nested-workspaces", run := Discovery.testNested ctx },
           { name := "extend", run := Discovery.testExtend ctx },
           { name := "extend-cycle", run := Discovery.testExtendCycle ctx },

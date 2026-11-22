@@ -791,7 +791,7 @@ inductive DiscoveryInput where
   | content (path : String) (digest : Digest)
   | environment (name : String) (value : Option String)
   | extendAnchor (path : String) (anchor : String)
-  deriving BEq, Repr
+  deriving BEq, Repr, Lean.ToJson
 
 abbrev DiscoveryInputLog := Option (IO.Ref (Array DiscoveryInput))
 

@@ -63,6 +63,7 @@ structure RunRequest where
   files : Array FilePath
   /-- The exact UTF-8 bytes approved for each path in a supervised finite fix. -/
   admittedSources : Array (String × Digest) := #[]
+  admittedPreview? : Option Digest := none
   cache : Bool := true
   configPath? : Option FilePath := none
   select : Array String := #[]
@@ -1801,7 +1802,26 @@ private def withVerbatimCommands (snapshot : SourceSnapshot) (analysis : Semanti
 structure PreviewInputBinding where
   discovery : Array DiscoveryInput
   sources : Array (String × Digest)
-  deriving BEq, Repr
+  deriving BEq, Repr, Lean.ToJson
+
+def PreviewInputBinding.digest (binding : PreviewInputBinding) : Digest :=
+  Digest.ofString <| (Lean.toJson ("lean-fmt-preview-input-v1", binding)).compress
+
+private def previewBinding (entries : Array DiscoveryInput) (snapshots : Array SourceSnapshot) :
+    IO PreviewInputBinding := do
+  if snapshots.size > 16384 then
+    throw <| IO.userError "formatter preview exceeds the source binding limit"
+  return {
+    discovery := entries
+    sources := snapshots.map fun snapshot => (snapshot.relativePath, Digest.ofString snapshot.source) }
+
+/-- Capture implicit preview inputs without evaluating the Lake workspace. -/
+def capturePreviewInput (requestedRoot : FilePath) : IO Digest := do
+  let root ← IO.FS.realPath requestedRoot
+  let entries ← IO.mkRef #[]
+  let discovery ← Discovery.run root none (some entries)
+  let snapshots ← Project.previewSnapshots root discovery
+  return (← previewBinding (← entries.get) snapshots).digest
 
 /-- What one run produced: the canonical report, the line/column resolution used in presentation, and the input binding when requested.
 `RunReport` is a compatibility surface; the other values are independent of its renderers. -/
@@ -1925,9 +1945,11 @@ private def verifyAdmittedSources (expected : Std.HashMap String Digest)
 selection, source snapshots, trusted-artifact validation, fallback, deterministic aggregation, and
 resource intent. No caller can sequence or retain those mechanisms independently. -/
 def execute (request : RunRequest) (bindPreviewInputs : Bool := false) : IO RunOutcome := do
+  let bindPreviewInputs := bindPreviewInputs || request.admittedPreview?.isSome
   if bindPreviewInputs then
     unless request.mode == .format && request.formatCheck && request.files.isEmpty &&
-        request.configPath?.isNone && request.noBuild && !request.cache do
+        request.configPath?.isNone && request.noBuild && !request.cache &&
+        request.reflowComments?.isNone do
       throw <| IO.userError "input binding requires implicit format --check --no-build --no-cache"
   let discoveryLog ← if bindPreviewInputs then some <$> IO.mkRef #[] else pure none
   let expected ← IO.ofExcept request.admittedSourceMap
@@ -1980,11 +2002,11 @@ def execute (request : RunRequest) (bindPreviewInputs : Bool := false) : IO RunO
   verifyAdmittedSources expected snapshots
   let previewInputs ←
     if let some entries := discoveryLog then
-      if snapshots.size > 16384 then
-        throw <| IO.userError "formatter preview exceeds the source binding limit"
-      pure <| some {
-        discovery := ← entries.get
-        sources := snapshots.map fun snapshot => (snapshot.relativePath, Digest.ofString snapshot.source) }
+      let binding ← previewBinding (← entries.get) snapshots
+      if let some admitted := request.admittedPreview? then
+        unless binding.digest == admitted do
+          throw <| IO.userError "formatter preview inputs differ from the admitted digest"
+      pure (some binding)
     else
       pure none
   milestone s!"selected {snapshots.size} {if snapshots.size == 1 then "file" else "files"}"
