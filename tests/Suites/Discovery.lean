@@ -416,6 +416,7 @@ private def testLargeTree (ctx : Ctx) : IO Unit := do
 private def testPreviewInputs (ctx : Ctx) : IO Unit := do
   let root := ctx.work / "preview-inputs"
   IO.FS.createDirAll root
+  let root ← IO.FS.realPath root
   copyFile (ctx.root / "lean-toolchain") (root / "lean-toolchain")
   writeFile (root / "lakefile.toml") "name = \"previewInputs\"\n[[lean_lib]]\nname = \"Probe\"\n"
   let source := "def a  : Nat := 1\n"
@@ -424,7 +425,6 @@ private def testPreviewInputs (ctx : Ctx) : IO Unit := do
   writeFile ignorePath "Ignored.lean\n"
   writeFile (root / "Probe.lean") source
   writeFile (root / "Ignored.lean") ignored
-  let root ← IO.FS.realPath root
   let binding := do
     let entries ← IO.mkRef #[]
     let discovery ← LeanFmt.Internal.Discovery.run root none (some entries)
