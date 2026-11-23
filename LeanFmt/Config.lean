@@ -793,7 +793,8 @@ inductive DiscoveryInput where
   | extendAnchor (path : String) (anchor : String)
   deriving BEq, Repr, Lean.ToJson
 
-abbrev DiscoveryInputLog := Option (IO.Ref (Array DiscoveryInput))
+abbrev DiscoveryInputLog :=
+  Option (IO.Ref (Array DiscoveryInput))
 
 def DiscoveryInputLog.record (log : DiscoveryInputLog) (input : DiscoveryInput) : IO Unit := do
   if let some entries := log then
@@ -809,8 +810,10 @@ def DiscoveryInputLog.exists (log : DiscoveryInputLog) (path : System.FilePath) 
       discard path.metadata
       pure true
     catch
-      | .noFileOrDirectory .. => pure false
-      | error => throw error
+    | .noFileOrDirectory .. =>
+      pure false
+    | error =>
+      throw error
   log.record (if present then .present path.toString else .absent path.toString)
   return present
 
@@ -825,7 +828,8 @@ def DiscoveryInputLog.env (log : DiscoveryInputLog) (name : String) : IO (Option
   log.record (.environment name value)
   return value
 
-private def loadDocument (log : DiscoveryInputLog) (path : System.FilePath) : IO (Lake.Toml.Table × Lean.FileMap) := do
+private def loadDocument (log : DiscoveryInputLog) (path : System.FilePath) :
+    IO (Lake.Toml.Table × Lean.FileMap) := do
   let input ← log.read path
   let context := Lean.Parser.mkInputContext input path.toString
   match ← Lake.Toml.loadToml context |>.toBaseIO with
@@ -862,8 +866,9 @@ Chain members are identified by **realpath**, so a symlinked alias of an ancesto
 still caught as a cycle. A parent outside the project root keeps the extending file's anchor rather
 than acquiring one outside the tree, which is what makes an out-of-tree shared config usable at
 all; a parent inside the root anchors at its own directory like any discovered config. -/
-private partial def loadChain (log : DiscoveryInputLog) (root : System.FilePath) (path : System.FilePath) (anchor : String)
-    (seen : Array System.FilePath) : IO PartialConfig := do
+private partial def loadChain (log : DiscoveryInputLog) (root : System.FilePath)
+    (path : System.FilePath) (anchor : String) (seen : Array System.FilePath) : IO PartialConfig :=
+  do
   let resolved ← IO.FS.realPath path
   if seen.contains resolved then
     let cycle := (seen.push resolved).map (·.toString)

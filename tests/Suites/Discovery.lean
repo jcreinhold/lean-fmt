@@ -424,40 +424,59 @@ private def testPreviewInputs (ctx : Ctx) : IO Unit := do
   writeFile ignorePath "Ignored.lean\n"
   writeFile (root / "Probe.lean") source
   writeFile (root / "Ignored.lean") ignored
-  let request : LeanFmt.Internal.Application.RunRequest := {
-    mode := .format, root, files := #[], formatCheck := true, noBuild := true, cache := false,
-    inheritProcessGroup := true, workers := some 1 }
-  let plain ← LeanFmt.Internal.Application.execute request
-  let bound ← LeanFmt.Internal.Application.execute request (bindPreviewInputs := true)
-  ensureEq "binding preserves the ordinary preview report"
-    (Lean.toJson plain.report).compress (Lean.toJson bound.report).compress
-  ensureEq "the renderer actually produced a preview" #["would-format"]
-    (bound.report.files.map (·.status))
-  let some original := bound.previewInputs | throw <| IO.userError "missing preview binding"
-  ensureEq "only the selected source contributes a digest"
-    #[("Probe.lean", LeanFmt.Digest.ofString source)] original.sources
   let root ← IO.FS.realPath root
-  ensure (original.discovery.contains (.content ignorePath.toString
-      (LeanFmt.Digest.ofString "Ignored.lean\n"))) "missing the actual ignore bytes"
+  let binding := do
+    let entries ← IO.mkRef #[]
+    let discovery ← LeanFmt.Internal.Discovery.run root none (some entries)
+    let snapshots ← LeanFmt.Internal.Project.previewSnapshots root discovery
+    LeanFmt.Internal.Application.previewBinding (← entries.get) snapshots
+  let original ← binding
+  let args :=
+    #["format", "--check", "--no-build", "--no-cache", "--inherit-process-group", "--workers", "1",
+      "--root", root.toString, "--json"]
+  let admitted := fun (digest : LeanFmt.Digest) => args ++ #["--admitted-preview", digest.hex]
+  let plain ← expectExit 1 "ordinary rendered preview" ctx.application args
+  let bound ←
+    expectExit 1 "preview bound to exact inputs" ctx.application (admitted original.digest)
+  ensureEq "binding preserves the ordinary preview report" plain.stdout bound.stdout
+  let report ← parseJson bound.stdout "bound preview"
+  let files ← IO.ofExcept <| (← IO.ofExcept <| report.getObjVal? "files").getArr?
+  ensureEq "the renderer actually produced a preview" #["would-format"]
+      (← files.mapM fun file => IO.ofExcept <| file.getObjValAs? String "status")
+  ensureEq "only the selected source contributes a digest"
+      #[("Probe.lean", LeanFmt.Digest.ofString source)] original.sources
+  ensure
+      (original.discovery.contains
+        (.content ignorePath.toString (LeanFmt.Digest.ofString "Ignored.lean\n")))
+      "missing the actual ignore bytes"
   let config := root / ".lean-fmt.toml"
   ensure (original.discovery.contains (.absent config.toString)) "missing absent config lookup"
-  ensureEq "preview does not rewrite selected source" source (← IO.FS.readFile (root / "Probe.lean"))
+  ensureEq "preview does not rewrite selected source" source
+      (← IO.FS.readFile (root / "Probe.lean"))
   ensureEq "preview leaves ignored source alone" ignored (← IO.FS.readFile (root / "Ignored.lean"))
   writeFile config "# no policy change\n"
-  let bound ← LeanFmt.Internal.Application.execute request (bindPreviewInputs := true)
-  let some configured := bound.previewInputs | throw <| IO.userError "missing config binding"
+  let configured ← binding
+  let stale ← expectExit 2 "stale original inputs" ctx.application (admitted original.digest)
+  ensure (stale.stdout.isEmpty && stale.stderr.contains "differ from the admitted digest")
+      "stale preview must refuse before returning a report"
   ensure (configured.discovery != original.discovery) "new config must change discovery evidence"
-  ensure (configured.discovery.contains (.content config.toString
-      (LeanFmt.Digest.ofString "# no policy change\n"))) "missing the new config bytes"
+  ensure
+      (configured.discovery.contains
+        (.content config.toString (LeanFmt.Digest.ofString "# no policy change\n")))
+      "missing the new config bytes"
   ensureEq "config appearance did not change implicit selection" original.sources configured.sources
   let edited := "def a  : Nat := 3\n"
   writeFile (root / "Probe.lean") edited
-  let bound ← LeanFmt.Internal.Application.execute request (bindPreviewInputs := true)
-  let some changed := bound.previewInputs | throw <| IO.userError "missing edited source binding"
-  ensure (changed.discovery == configured.discovery) "editing source did not change discovery policy"
+  let changed ← binding
+  let stale ← expectExit 2 "stale configured inputs" ctx.application (admitted configured.digest)
+  ensure (stale.stdout.isEmpty && stale.stderr.contains "differ from the admitted digest")
+      "stale preview must refuse before returning a report"
+  ensure (changed.discovery == configured.discovery)
+      "editing source did not change discovery policy"
   ensureEq "bound snapshot contains the changed input"
-    #[("Probe.lean", LeanFmt.Digest.ofString edited)] changed.sources
-  ensureEq "preview preserves the newly edited source" edited (← IO.FS.readFile (root / "Probe.lean"))
+      #[("Probe.lean", LeanFmt.Digest.ofString edited)] changed.sources
+  ensureEq "preview preserves the newly edited source" edited
+      (← IO.FS.readFile (root / "Probe.lean"))
 
 private def testAdmittedPreview (ctx : Ctx) : IO Unit := do
   let root := ctx.work / "admitted-preview"
@@ -469,23 +488,25 @@ private def testAdmittedPreview (ctx : Ctx) : IO Unit := do
   writeFile (root / ".lean-fmt.toml") "extend = \"../preview-policy.toml\"\n"
   let parent := ctx.work / "preview-policy.toml"
   writeFile parent "# ordinary defaults\n"
-  let capture ← expectExit 0 "preview input capture" ctx.application
-    #["preview-input", "--root", root.toString]
+  let capture ←
+    expectExit 0 "preview input capture" ctx.application #["preview-input", "--root", root.toString]
   let digest := capture.stdout.trimAscii.toString
   ensure ((LeanFmt.Digest.parse? digest).isSome) "capture must emit one digest"
   ensure (!(← (root / ".lake").pathExists) && !(← (root / "lake-manifest.json").pathExists))
-    "query must not load or refresh Lake state"
-  let args := #["format", "--check", "--no-build", "--no-cache", "--inherit-process-group", "--workers",
-    "1", "--root", root.toString, "--json"]
+      "query must not load or refresh Lake state"
+  let args :=
+    #["format", "--check", "--no-build", "--no-cache", "--inherit-process-group", "--workers", "1",
+      "--root", root.toString, "--json"]
   let argsWithDigest := args ++ #["--admitted-preview", digest]
   let ordinary ← expectExit 1 "ordinary preview" ctx.application args
   let accepted ← expectExit 1 "admitted preview" ctx.application argsWithDigest
   ensureEq "successful admitted check preserves ordinary output" ordinary.stdout accepted.stdout
   writeFile parent "exclude = [\"Probe.lean\"]\n"
   discard <| expectExit 0 "new policy changes the ordinary verdict" ctx.application args
-  let refused ← expectExit 2 "old digest refuses inherited policy change" ctx.application argsWithDigest
+  let refused ←
+    expectExit 2 "old digest refuses inherited policy change" ctx.application argsWithDigest
   ensure (refused.stdout.isEmpty && refused.stderr.contains "differ from the admitted digest")
-    "changed inherited configuration must produce only the refusal"
+      "changed inherited configuration must produce only the refusal"
   ensureEq "preview leaves source untouched" source (← IO.FS.readFile (root / "Probe.lean"))
 
 end Discovery

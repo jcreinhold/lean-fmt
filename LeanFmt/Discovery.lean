@@ -144,7 +144,8 @@ private structure IgnoreLayer where
   patterns : Array IgnorePattern
   origin : String
 
-private def readIgnoreFile (log : DiscoveryInputLog) (path : FilePath) (base : String) : IO IgnoreLayer := do
+private def readIgnoreFile (log : DiscoveryInputLog) (path : FilePath) (base : String) :
+    IO IgnoreLayer := do
   let text ← log.read path
   let patterns := (text.splitOn "\n").filterMap (compileIgnoreLine base)
   return { patterns := patterns.toArray, origin := path.toString }
@@ -225,7 +226,8 @@ private def globalIgnoreFile? (log : DiscoveryInputLog) : IO (Option FilePath) :
 filesystem root. May sit **above** the project root, because a Lean project is commonly a
 subdirectory of a larger repository. `.git` may be a directory or a
 file (a worktree or submodule gitlink); both forms are accepted. -/
-private partial def repositoryRoot? (log : DiscoveryInputLog) (directory : FilePath) : IO (Option FilePath) := do
+private partial def repositoryRoot? (log : DiscoveryInputLog) (directory : FilePath) :
+    IO (Option FilePath) := do
   if ← log.exists (directory / ".git") then
     return some directory
   match directory.parent with
@@ -239,12 +241,14 @@ private partial def repositoryRoot? (log : DiscoveryInputLog) (directory : FileP
 
 /-- `.git/info/exclude` for a repository root, following a `.git` **file** (`gitdir: <path>`) to the
 real git directory when necessary. -/
-private def repositoryExclude? (log : DiscoveryInputLog) (repository : FilePath) : IO (Option FilePath) := do
+private def repositoryExclude? (log : DiscoveryInputLog) (repository : FilePath) :
+    IO (Option FilePath) := do
   let dotGit := repository / ".git"
-  let isDirectory ← if log.isSome then
-    pure ((← dotGit.metadata).type == .dir)
-  else
-    dotGit.isDir
+  let isDirectory ←
+    if log.isSome then
+      pure ((← dotGit.metadata).type == .dir)
+    else
+      dotGit.isDir
   log.record (.directory dotGit.toString isDirectory)
   let gitDirectory ←
     if isDirectory then
@@ -312,8 +316,9 @@ The single walk exists to avoid a per-file filesystem
 ascent. Pruning is sound because git's directory-exclusion rule holds — an ignored directory can hold
 no re-included file, so not descending cannot lose one. -/
 private partial def walkDirectory (log : DiscoveryInputLog) (root : FilePath)
-    (explicit? : Option FormatterConfig) (directory : FilePath) (relative : String) (current : FormatterConfig)
-    (layers : Array IgnoreLayer) (accumulated : Discovery) : IO Discovery := do
+    (explicit? : Option FormatterConfig) (directory : FilePath) (relative : String)
+    (current : FormatterConfig) (layers : Array IgnoreLayer) (accumulated : Discovery) :
+    IO Discovery := do
   let mut current := current
   let mut layers := layers
   let mut accumulated := accumulated

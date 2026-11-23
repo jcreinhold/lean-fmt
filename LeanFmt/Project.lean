@@ -259,7 +259,8 @@ private def snapshotTarget (workspace : Option Lake.Workspace) (discovery : Disc
 
 private def implicitTargets (root : FilePath) (discovery : Discovery.Discovery)
     (workspace : Option Lake.Workspace) : IO (Array SourceTarget) := do
-  let paths ← discovery.selectedSources.mapM fun relative => IO.FS.realPath (root / FilePath.mk relative)
+  let paths ←
+    discovery.selectedSources.mapM fun relative => IO.FS.realPath (root / FilePath.mk relative)
   paths.mapM (snapshotTarget workspace discovery root)
 
 /-- Read the same implicit source selection as a batch run without loading Lake state. -/
@@ -356,17 +357,18 @@ def load (requestedRoot : FilePath) (discovery : Discovery.Discovery) (requested
     if requested.isEmpty then
       implicitTargets root discovery (some workspace)
     else
-      let paths ← requested.mapM fun path => do
-          -- Resolve against the root, but report a missing file in the caller's own terms. `realPath`
-          -- on a path that does not exist throws `noFileOrDirectory` naming its partially-resolved
-          -- buffer, which absolutizes the leading component and mangles the rest — unreadable when a
-          -- whole argument list arrives as one path (an unquoted shell variable under a non-splitting
-          -- shell). Name what the caller wrote, consistent with the outside-root / not-a-source siblings
-          -- and `Config` above.
-          let candidate := if path.isAbsolute then path else root / path
-          unless ← candidate.pathExists do
-            throw <| IO.userError s!"selected file does not exist: {path}"
-          IO.FS.realPath candidate
+      let paths ←
+        requested.mapM fun path => do
+            -- Resolve against the root, but report a missing file in the caller's own terms. `realPath`
+            -- on a path that does not exist throws `noFileOrDirectory` naming its partially-resolved
+            -- buffer, which absolutizes the leading component and mangles the rest — unreadable when a
+            -- whole argument list arrives as one path (an unquoted shell variable under a non-splitting
+            -- shell). Name what the caller wrote, consistent with the outside-root / not-a-source siblings
+            -- and `Config` above.
+            let candidate := if path.isAbsolute then path else root / path
+            unless ← candidate.pathExists do
+              throw <| IO.userError s!"selected file does not exist: {path}"
+            IO.FS.realPath candidate
       paths.mapM (snapshotTarget (some workspace) discovery root)
   -- `force-exclude` runs after snapshotting because it reads the file's *own* effective
   -- configuration, which is a per-file fact. A path discovery dropped is absent from `sources`, so

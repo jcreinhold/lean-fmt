@@ -1812,8 +1812,9 @@ private def previewBinding (entries : Array DiscoveryInput) (snapshots : Array S
   if snapshots.size > 16384 then
     throw <| IO.userError "formatter preview exceeds the source binding limit"
   return {
-    discovery := entries
-    sources := snapshots.map fun snapshot => (snapshot.relativePath, Digest.ofString snapshot.source) }
+      discovery := entries
+      sources :=
+        snapshots.map fun snapshot => (snapshot.relativePath, Digest.ofString snapshot.source) }
 
 /-- Capture implicit preview inputs without evaluating the Lake workspace. -/
 def capturePreviewInput (requestedRoot : FilePath) : IO Digest := do
@@ -1920,14 +1921,18 @@ private def RunRequest.admittedSourceMap (request : RunRequest) :
     Except String (Std.HashMap String Digest) := do
   if request.admittedSources.isEmpty then
     return {}
-  unless request.mode == .fix && request.noBuild && request.inheritProcessGroup &&
-      !request.cache && request.files.isEmpty do
-    throw "--admitted-source requires check --fix --no-build --inherit-process-group --no-cache without other file targets"
+  unless
+    request.mode == .fix && request.noBuild && request.inheritProcessGroup && !request.cache &&
+      request.files.isEmpty do
+    throw
+        "--admitted-source requires check --fix --no-build --inherit-process-group --no-cache without other file targets"
   let mut expected : Std.HashMap String Digest := {}
   for (relative, digest) in request.admittedSources do
     let path := FilePath.mk relative
-    if path.isAbsolute || path.components.any (fun part => part == "" || part == "." || part == "..") ||
-        expected.contains relative then
+    if
+        path.isAbsolute ||
+          path.components.any (fun part => part == "" || part == "." || part == "..") ||
+          expected.contains relative then
       throw s!"invalid or duplicate admitted formatter source: {relative}"
     expected := expected.insert relative digest
   return expected
@@ -1947,14 +1952,22 @@ resource intent. No caller can sequence or retain those mechanisms independently
 def execute (request : RunRequest) (bindPreviewInputs : Bool := false) : IO RunOutcome := do
   let bindPreviewInputs := bindPreviewInputs || request.admittedPreview?.isSome
   if bindPreviewInputs then
-    unless request.mode == .format && request.formatCheck && request.files.isEmpty &&
-        request.configPath?.isNone && request.noBuild && !request.cache &&
+    unless
+      request.mode == .format && request.formatCheck && request.files.isEmpty &&
+        request.configPath?.isNone &&
+        request.noBuild &&
+        !request.cache &&
         request.reflowComments?.isNone do
       throw <| IO.userError "input binding requires implicit format --check --no-build --no-cache"
-  let discoveryLog ← if bindPreviewInputs then some <$> IO.mkRef #[] else pure none
+  let discoveryLog ←
+    if bindPreviewInputs then
+      some <$> IO.mkRef #[]
+    else
+      pure none
   let expected ← IO.ofExcept request.admittedSourceMap
-  let files := if expected.isEmpty then request.files else
-    request.admittedSources.map fun (relative, _) => FilePath.mk relative
+  let files :=
+    if expected.isEmpty then request.files
+    else request.admittedSources.map fun (relative, _) => FilePath.mk relative
   let workers ← resolveWorkers request.workers
   recordCount "workers" workers
   let root ← IO.FS.realPath request.root

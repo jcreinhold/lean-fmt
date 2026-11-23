@@ -248,19 +248,23 @@ private def parseFileArgs (mode : RunMode) (args : List String) :
     | "--admitted-preview" :: hash :: rest =>
       match Digest.parse? hash with
       | some digest =>
-        if command.run.admittedPreview?.isSome then
-          .error "--admitted-preview must appear once"
+        if command.run.admittedPreview?.isSome then .error "--admitted-preview must appear once"
         else
-          loop mode rest { command with run := { command.run with admittedPreview? := some digest } }
+          loop mode rest
+            { command with run := { command.run with admittedPreview? := some digest } }
       | none => .error "--admitted-preview requires a lowercase SHA-256 digest"
     | "--admitted-preview" :: _ => .error "--admitted-preview requires a SHA-256 digest"
     | "--admitted-source" :: path :: hash :: rest =>
       match Digest.parse? hash with
       | some digest =>
-        loop mode rest { command with run := {
-          command.run with admittedSources := command.run.admittedSources.push (path, digest) } }
+        loop mode rest
+          { command with
+            run :=
+              { command.run with
+                admittedSources := command.run.admittedSources.push (path, digest) } }
       | none => .error "--admitted-source requires a lowercase SHA-256 digest"
-    | "--admitted-source" :: _ => .error "--admitted-source requires a relative path and SHA-256 digest"
+    | "--admitted-source" :: _ =>
+      .error "--admitted-source requires a relative path and SHA-256 digest"
     | "--no-cache" :: rest =>
       loop mode rest { command with run := { command.run with cache := false } }
     | "--config" :: path :: rest =>
@@ -1578,12 +1582,17 @@ private unsafe def runFileCommand (mode : RunMode) (args : List String) : IO UIn
     | .error message =>
       IO.eprintln message;
       return 2
-  if !command.run.admittedSources.isEmpty && (command.watch || command.stdin || command.changed?.isSome) then
+  if
+      !command.run.admittedSources.isEmpty &&
+        (command.watch || command.stdin || command.changed?.isSome) then
     IO.eprintln "--admitted-source requires a finite disk fix"
     return 2
-  if command.run.admittedPreview?.isSome &&
-      (command.watch || command.stdin || command.stdinFilename?.isSome || command.changed?.isSome ||
-        command.range?.isSome || !command.run.inheritProcessGroup) then
+  if
+      command.run.admittedPreview?.isSome &&
+        (command.watch || command.stdin || command.stdinFilename?.isSome ||
+          command.changed?.isSome ||
+          command.range?.isSome ||
+          !command.run.inheritProcessGroup) then
     IO.eprintln "--admitted-preview requires a supervised implicit disk preview"
     return 2
   if let .error message := validateStdin mode command then
