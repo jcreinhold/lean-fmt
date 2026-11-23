@@ -28,7 +28,7 @@ and require a release for that toolchain:
 
 ```lean
 require «lean-fmt» from git
-  "https://github.com/jcreinhold/lean-fmt" @ "v4.36.0"
+  "https://github.com/jcreinhold/lean-fmt" @ "v4.36.0-fmt.2"
 ```
 
 ```sh
@@ -41,7 +41,7 @@ never rebuilds your own modules.
 To put `lean-fmt` on your `PATH` instead of calling it through `lake exe`:
 
 ```sh
-git clone --branch v4.36.0 https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
+git clone --branch v4.36.0-fmt.2 https://github.com/jcreinhold/lean-fmt.git && cd lean-fmt && make install
 ```
 
 With elan on `PATH` this installs the matching toolchain itself. `PREFIX=/usr/local` overrides the install location,

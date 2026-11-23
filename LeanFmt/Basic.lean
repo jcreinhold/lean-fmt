@@ -17,6 +17,6 @@ namespace LeanFmt
 and the release tag without its leading `v`. Formatter-only repairs include the `-fmt.N`
 suffix. The boundary suite checks the package, README, and reported versions agree. -/
 def version : String :=
-  "4.36.0"
+  "4.36.0-fmt.2"
 
 end LeanFmt

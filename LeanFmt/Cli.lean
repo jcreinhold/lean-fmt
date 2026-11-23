@@ -7,10 +7,11 @@ Authors: Jacob Reinhold
 module
 
 import all LeanFmt.CliHelp
-import LeanFmt.Digest
 import all LeanFmt.GitSelection
 import all LeanFmt.LanguageServer
 import all LeanFmt.Watch
+
+import LeanFmt.Digest
 
 open System
 

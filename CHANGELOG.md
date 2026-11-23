@@ -8,6 +8,19 @@ notes are on the [releases page](https://github.com/jcreinhold/lean-fmt/releases
 Releases are named for the Lean toolchain they serve. Releases through 0.7.1 used semantic versions and a compatibility
 table; 0.7.1 is the last of those and serves Lean `v4.34.0-rc1`.
 
+## 4.36.0-fmt.2 — 2026-11-23
+
+### Upgrading
+
+Pin `v4.36.0-fmt.2` to use managed previews and fixes with Lean `v4.36.0`.
+
+### Added
+
+- `lean-fmt preview-input --root PATH` prints the preview input digest without loading Lake.
+  A supervised preview with `--admitted-preview` refuses if those inputs have changed.
+- A finite supervised fix accepts `--admitted-source PATH SHA256` for each selected file and
+  refuses a file whose bytes have changed since admission.
+
 ## 4.36.0-fmt.1 — 2026-11-18
 
 ### Upgrading
